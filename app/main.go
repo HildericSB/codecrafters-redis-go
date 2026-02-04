@@ -36,12 +36,18 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	_, err := reader.ReadString('\n')
-	if err != nil {
-		log.Printf("Read error : %v", err)
-		return
-	}
 
-	conn.Write([]byte("+PONG\r\n"))
+	for {
+		for range 3 {
+			_, err := reader.ReadString('\n')
+
+			if err != nil {
+				log.Printf("Read error : %v, err")
+				return
+			}
+
+		}
+		conn.Write([]byte("+PONG\r\n"))
+	}
 
 }
