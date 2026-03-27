@@ -39,11 +39,24 @@ func handleConnection(conn net.Conn) {
 
 	for {
 		for range 3 {
-			_, err := reader.ReadString('\n')
+			line, err := reader.ReadString('\n')
 
 			if err != nil {
 				log.Printf("Read error : %v, err")
 				return
+			}
+
+			fmt.Println(line)
+
+			// Resp Array Reader
+			if len(line) == 0 || line[0] != '*' {
+				continue
+			}
+
+			var arrayLen int
+			_, err := fmt.Scanf(line, "*%d\r\n", &arrayLen)
+			if err != nil {
+				fmt.Println("Failed to read ")
 			}
 
 		}
