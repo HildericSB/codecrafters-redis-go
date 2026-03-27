@@ -28,6 +28,18 @@ type RESP struct {
 	Count int
 }
 
+func (r RESP) String() string {
+	if r.Type == Array {
+		var res string
+		for _, e := range r.Items {
+			res = "[array]\n" + res + e.String() + "\n"
+		}
+		return res
+	}
+
+	return string(r.Data)
+}
+
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
 var _ = net.Listen
 var _ = os.Exit
@@ -60,20 +72,30 @@ func handleConnection(conn net.Conn) {
 	for {
 		resp, err := readRESP(reader)
 		if err != nil {
-			panic(fmt.Errorf("error reading RESP : ", err))
+			// Client send EOF when finished
+			if err != io.EOF {
+				fmt.Println("error reading RESP:", err)
+			}
+			return
 		}
 
-		if resp.Type == String {
-			cmd := strings.ToUpper(string(resp.Data))
-			if cmd == "PING" {
-				conn.Write([]byte("+PONG\r\n"))
-			}
-		}
+		fmt.Print(resp)
+
+		// if resp.Type == String || resp.Type == Bulk {
+		// 	cmd := strings.ToUpper(string(resp.Data))
+		// 	if cmd == "PING" {
+		// 		conn.Write([]byte("+PONG\r\n"))
+		// 	}
+		// }
 
 		if resp.Type == Array {
 			cmd := strings.ToUpper(string(resp.Items[0].Data))
 			if cmd == "ECHO" {
-				conn.Write(fmt.Appendf(nil, "+%s\r\n", resp.Items[1].Data))
+				conn.Write(fmt.Appendf(nil, "$%d\r\n%s\r\n", len(resp.Items[1].Data), resp.Items[1].Data))
+			}
+
+			if cmd == "PING" {
+				conn.Write([]byte("+PONG\r\n"))
 			}
 		}
 	}
@@ -84,6 +106,9 @@ func handleConnection(conn net.Conn) {
 // readRESP : use a reader to return a RESP
 func readRESP(reader *bufio.Reader) (RESP, error) {
 	line, _, err := reader.ReadLine() // readline remove crlf
+
+	// fmt.Printf("Reading line : %s \n", line)
+
 	if err != nil {
 		return RESP{}, err
 	}
@@ -101,7 +126,7 @@ func readRESP(reader *bufio.Reader) (RESP, error) {
 			return RESP{}, fmt.Errorf("invalid array count: %w", err)
 		}
 		items := make([]RESP, count)
-		for i := 0; i < count; i++ {
+		for i := range items {
 			items[i], err = readRESP(reader)
 			if err != nil {
 				return RESP{}, err
