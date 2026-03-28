@@ -85,26 +85,13 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		}
 		key := r.Items[1].String()
 		value := r.Items[2].String()
-		expiry := time.Time{}
 
-		// If two other args given
-		if r.Count > 3 {
-			cmd2 := strings.ToUpper(r.Items[3].String())
-			switch cmd2 {
-			case "PX":
-				if len(r.Items) < 4 {
-					return fmt.Errorf("PX cmd requires a value")
-				}
-				expiry = time.Now().Add(time.Millisecond * time.Duration(r.Items[4].Int()))
-			}
+		expiry, err := parseExpiry(r)
+		if err != nil {
+			return err
 		}
 
-		redisval := Entry{
-			val:            value,
-			expirationDate: expiry,
-		}
-
-		s.values[key] = redisval
+		s.values[key] = Entry{val: value, expirationDate: expiry}
 		conn.Write(resp.EncodeSimpleString("OK"))
 
 	case "GET":
@@ -127,4 +114,21 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 	}
 
 	return nil
+}
+
+func parseExpiry(r resp.RESP) (time.Time, error) {
+	if r.Count <= 3 {
+		return time.Time{}, nil
+	}
+
+	option := strings.ToUpper(r.Items[3].String())
+	switch option {
+	case "PX":
+		if len(r.Items) < 5 {
+			return time.Time{}, fmt.Errorf("PX requires a value")
+		}
+		return time.Now().Add(time.Millisecond * time.Duration(r.Items[4].Int())), nil
+	default:
+		return time.Time{}, fmt.Errorf("unknown option: %s", option)
+	}
 }
