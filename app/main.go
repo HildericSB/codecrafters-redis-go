@@ -7,11 +7,19 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-var values map[string]string
+type Server struct {
+	values map[string]Entry
+}
+
+type Entry struct {
+	val            string
+	expirationDate time.Time
+}
 
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -21,7 +29,9 @@ func main() {
 	}
 	defer l.Close()
 
-	values = make(map[string]string)
+	s := Server{
+		values: make(map[string]Entry),
+	}
 
 	for {
 		conn, err := l.Accept()
@@ -30,12 +40,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		go handleConnection(conn)
+		go s.handleConnection(conn)
 	}
 
 }
 
-func handleConnection(conn net.Conn) {
+func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
@@ -53,51 +63,68 @@ func handleConnection(conn net.Conn) {
 		fmt.Print(val)
 
 		if val.Type == resp.Array {
-			handleCmd(val, conn)
+			s.handleCmd(val, conn)
 		}
 	}
 
 }
 
-func handleCmd(r resp.RESP, conn net.Conn) error {
+func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 	cmd := strings.ToUpper(string(r.Items[0].Data))
 
 	switch cmd {
 	case "ECHO":
-		conn.Write(encodeBulkString(string(r.Items[1].Data)))
+		conn.Write(resp.EncodeBulkString(string(r.Items[1].Data)))
 
 	case "PING":
-		conn.Write(encodeSimpleString("PONG"))
+		conn.Write(resp.EncodeSimpleString("PONG"))
 
 	case "SET":
-		if len(r.Items) < 2 {
-			return fmt.Errorf("SET cmd requires 2 parameters")
+		if r.Count < 2 {
+			return fmt.Errorf("SET cmd requires at least 2 parameters")
 		}
-		key := string(r.Items[1].Data)
+		key := r.Items[1].String()
+		value := r.Items[2].String()
+		expiry := time.Time{}
 
-		value := string(r.Items[2].Data)
-		values[key] = value
+		// If two other args given
+		if r.Count > 3 {
+			cmd2 := strings.ToUpper(r.Items[3].String())
+			switch cmd2 {
+			case "PX":
+				if len(r.Items) < 4 {
+					return fmt.Errorf("PX cmd requires a value")
+				}
+				expiry = time.Now().Add(time.Millisecond * time.Duration(r.Items[4].Int()))
+			}
+		}
 
-		conn.Write(encodeSimpleString("OK"))
+		redisval := Entry{
+			val:            value,
+			expirationDate: expiry,
+		}
+
+		s.values[key] = redisval
+		conn.Write(resp.EncodeSimpleString("OK"))
+
 	case "GET":
 		if len(r.Items) < 1 {
-			return fmt.Errorf("GET cmd requires 1 parameter")
+			return fmt.Errorf("GET cmd requires at least 1 parameter")
 		}
-		key := string(r.Items[1].Data)
-		value := values[key]
-		conn.Write(encodeBulkString(value))
+		key := r.Items[1].String()
+		value := s.values[key]
 
+		if !value.expirationDate.IsZero() && value.expirationDate.Before(time.Now()) {
+			//fmt.Printf("expired, now %v, expiration date: %v", time.Now(), value.expirationDate)
+			conn.Write(resp.EncodeBulkString(""))
+			return nil
+		}
+
+		fmt.Printf("key : %v , value: %v", key, value.val)
+		conn.Write(resp.EncodeBulkString(value.val))
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
 
 	return nil
-}
-
-func encodeSimpleString(str string) []byte {
-	return fmt.Appendf(nil, "+%s\r\n", str)
-}
-
-func encodeBulkString(str string) []byte {
-	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(str), str)
 }

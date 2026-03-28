@@ -26,15 +26,41 @@ type RESP struct {
 }
 
 func (r RESP) String() string {
-	if r.Type == Array {
-		var res string
-		for _, e := range r.Items {
-			res = "[array]\n" + res + e.String() + "\n"
-		}
-		return res
-	}
+	// if r.Type == Array {
+	// 	var res string
+	// 	for _, e := range r.Items {
+	// 		res = "[array]\n" + res + e.String() + " "
+	// 	}
+	// 	return res
+	// }
 
 	return string(r.Data)
+}
+
+func (r RESP) Int() int64 {
+	x, _ := strconv.ParseInt(r.String(), 10, 64)
+	return x
+}
+
+func (r RESP) Float() float64 {
+	x, _ := strconv.ParseFloat(r.String(), 10)
+	return x
+}
+
+func (r RESP) Bytes() []byte {
+	return r.Data
+}
+
+func EncodeSimpleString(str string) []byte {
+	return fmt.Appendf(nil, "+%s\r\n", str)
+}
+
+func EncodeBulkString(str string) []byte {
+	if len(str) == 0 {
+		return []byte("$-1\r\n")
+	}
+
+	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(str), str)
 }
 
 // readRESP : use a reader to return a RESP
