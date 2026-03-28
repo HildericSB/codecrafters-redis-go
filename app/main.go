@@ -6,43 +6,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"strconv"
 	"strings"
+
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-// Various RESP kinds
-type Type byte
-
-const (
-	Integer Type = ':'
-	String  Type = '+' // Simple string erminated by CRLF
-	Bulk    Type = '$' // A bulk string represents a single binary string. $<length>\r\n<data>\r\n
-	Array   Type = '*'
-	Error   Type = '-'
-)
-
-type RESP struct {
-	Type  Type
-	Data  []byte
-	Items []RESP
-	Count int
-}
-
-func (r RESP) String() string {
-	if r.Type == Array {
-		var res string
-		for _, e := range r.Items {
-			res = "[array]\n" + res + e.String() + "\n"
-		}
-		return res
-	}
-
-	return string(r.Data)
-}
-
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
+var values map[string]string
 
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -51,6 +20,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer l.Close()
+
+	values = make(map[string]string)
 
 	for {
 		conn, err := l.Accept()
@@ -70,7 +41,7 @@ func handleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
-		resp, err := readRESP(reader)
+		val, err := resp.ReadRESP(reader)
 		if err != nil {
 			// Client send EOF when finished
 			if err != io.EOF {
@@ -79,73 +50,46 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		fmt.Print(resp)
+		fmt.Print(val)
 
-		// if resp.Type == String || resp.Type == Bulk {
-		// 	cmd := strings.ToUpper(string(resp.Data))
-		// 	if cmd == "PING" {
-		// 		conn.Write([]byte("+PONG\r\n"))
-		// 	}
-		// }
-
-		if resp.Type == Array {
-			cmd := strings.ToUpper(string(resp.Items[0].Data))
-			if cmd == "ECHO" {
-				conn.Write(fmt.Appendf(nil, "$%d\r\n%s\r\n", len(resp.Items[1].Data), resp.Items[1].Data))
-			}
-
-			if cmd == "PING" {
-				conn.Write([]byte("+PONG\r\n"))
-			}
+		if val.Type == resp.Array {
+			handleCmd(val, conn)
 		}
 	}
 
 }
 
-// *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n
-// readRESP : use a reader to return a RESP
-func readRESP(reader *bufio.Reader) (RESP, error) {
-	line, _, err := reader.ReadLine() // readline remove crlf
+func handleCmd(r resp.RESP, conn net.Conn) error {
+	cmd := strings.ToUpper(string(r.Items[0].Data))
 
-	// fmt.Printf("Reading line : %s \n", line)
+	switch cmd {
+	case "ECHO":
+		conn.Write(fmt.Appendf(nil, "$%d\r\n%s\r\n", len(r.Items[1].Data), r.Items[1].Data))
 
-	if err != nil {
-		return RESP{}, err
-	}
+	case "PING":
+		conn.Write([]byte("+PONG\r\n"))
 
-	t := Type(line[0])
-	data := line[1:]
-
-	switch t {
-	case String:
-		return RESP{Type: t, Data: data}, nil
-
-	case Array:
-		count, err := strconv.Atoi(string(data))
-		if err != nil {
-			return RESP{}, fmt.Errorf("invalid array count: %w", err)
+	case "SET":
+		if len(r.Items) < 2 {
+			return fmt.Errorf("SET cmd requires 2 parameters")
 		}
-		items := make([]RESP, count)
-		for i := range items {
-			items[i], err = readRESP(reader)
-			if err != nil {
-				return RESP{}, err
-			}
+		key := string(r.Items[1].Data)
+
+		value := string(r.Items[2].Data)
+		values[key] = value
+
+		conn.Write([]byte("+OK\r\n"))
+	case "GET":
+		if len(r.Items) < 1 {
+			return fmt.Errorf("GET cmd requires 1 parameter")
 		}
-		return RESP{Type: t, Count: count, Items: items}, nil
-	case Bulk:
-		n, err := strconv.Atoi(string(data))
-		if err != nil {
-			return RESP{}, fmt.Errorf("invalid bulk length: %w", err)
-		}
-		// n bytes of data + \r\n
-		buff := make([]byte, n+2)
-		if _, err := io.ReadFull(reader, buff); err != nil {
-			return RESP{}, err
-		}
-		return RESP{Type: t, Data: buff[:n]}, nil
+		key := string(r.Items[1].Data)
+		value := values[key]
+		conn.Write(fmt.Appendf(nil, "$%d\r\n%s\r\n", len(value), value))
 
 	default:
-		return RESP{}, fmt.Errorf("Unknown resp type")
+		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
+
+	return nil
 }
