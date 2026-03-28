@@ -64,10 +64,10 @@ func handleCmd(r resp.RESP, conn net.Conn) error {
 
 	switch cmd {
 	case "ECHO":
-		conn.Write(fmt.Appendf(nil, "$%d\r\n%s\r\n", len(r.Items[1].Data), r.Items[1].Data))
+		conn.Write(encodeBulkString(string(r.Items[1].Data)))
 
 	case "PING":
-		conn.Write([]byte("+PONG\r\n"))
+		conn.Write(encodeSimpleString("PONG"))
 
 	case "SET":
 		if len(r.Items) < 2 {
@@ -78,18 +78,26 @@ func handleCmd(r resp.RESP, conn net.Conn) error {
 		value := string(r.Items[2].Data)
 		values[key] = value
 
-		conn.Write([]byte("+OK\r\n"))
+		conn.Write(encodeSimpleString("OK"))
 	case "GET":
 		if len(r.Items) < 1 {
 			return fmt.Errorf("GET cmd requires 1 parameter")
 		}
 		key := string(r.Items[1].Data)
 		value := values[key]
-		conn.Write(fmt.Appendf(nil, "$%d\r\n%s\r\n", len(value), value))
+		conn.Write(encodeBulkString(value))
 
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
 
 	return nil
+}
+
+func encodeSimpleString(str string) []byte {
+	return fmt.Appendf(nil, "+%s\r\n", str)
+}
+
+func encodeBulkString(str string) []byte {
+	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(str), str)
 }
