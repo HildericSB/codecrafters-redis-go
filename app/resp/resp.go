@@ -55,11 +55,11 @@ func EncodeSimpleString(str string) []byte {
 	return fmt.Appendf(nil, "+%s\r\n", str)
 }
 
-func EncodeBulkString(str string) []byte {
-	if len(str) == 0 {
-		return []byte("$-1\r\n")
-	}
+func EncodeInterger(val int) []byte {
+	return fmt.Appendf(nil, ":%d\r\n", val)
+}
 
+func EncodeBulkString(str string) []byte {
 	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(str), str)
 }
 

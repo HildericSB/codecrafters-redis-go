@@ -13,11 +13,26 @@ import (
 )
 
 type Server struct {
-	values map[string]Entry
+	entries map[string]*Entry
 }
 
+// type Value interface {
+// 	Type() string
+// }
+
+// type StringValue string
+
+// func (s StringValue) Type() string   { return "string" }
+// func (s StringValue) String() string { return string(s) }
+
+// type ListValue struct {
+// 	vals []string
+// }
+
+// func (l ListValue) Type() string { return "list" }
+
 type Entry struct {
-	val            string
+	val            any
 	expirationDate time.Time
 }
 
@@ -30,7 +45,7 @@ func main() {
 	defer l.Close()
 
 	s := Server{
-		values: make(map[string]Entry),
+		entries: make(map[string]*Entry),
 	}
 
 	for {
@@ -70,7 +85,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 }
 
 func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
-	cmd := strings.ToUpper(string(r.Items[0].Data))
+	cmd := strings.ToUpper(r.Items[0].String())
 
 	switch cmd {
 	case "ECHO":
@@ -81,34 +96,69 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 
 	case "SET":
 		if r.Count < 2 {
-			return fmt.Errorf("SET cmd requires at least 2 parameters")
+			return fmt.Errorf("SET cmd requires at least 1 parameters")
 		}
 		key := r.Items[1].String()
-		value := r.Items[2].String()
+		val := r.Items[2].String()
 
 		expiry, err := parseExpiry(r)
 		if err != nil {
 			return err
 		}
 
-		s.values[key] = Entry{val: value, expirationDate: expiry}
+		v := string(val)
+
+		s.entries[key] = &Entry{val: v, expirationDate: expiry}
 		conn.Write(resp.EncodeSimpleString("OK"))
 
 	case "GET":
-		if len(r.Items) < 1 {
+		if r.Count < 2 {
 			return fmt.Errorf("GET cmd requires at least 1 parameter")
 		}
-		key := r.Items[1].String()
-		value := s.values[key]
 
-		if !value.expirationDate.IsZero() && value.expirationDate.Before(time.Now()) {
-			//fmt.Printf("expired, now %v, expiration date: %v", time.Now(), value.expirationDate)
-			conn.Write(resp.EncodeBulkString(""))
+		key := r.Items[1].String()
+		entry := s.entries[key]
+		var stringVal string
+
+		if value, ok := entry.val.(string); !ok {
+			return fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
+		} else {
+			stringVal = value
+		}
+
+		if entry == nil {
+			conn.Write([]byte("$-1\r\n"))
 			return nil
 		}
 
-		fmt.Printf("key : %v , value: %v", key, value.val)
-		conn.Write(resp.EncodeBulkString(value.val))
+		if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
+			delete(s.entries, key)
+			conn.Write([]byte("$-1\r\n"))
+			return nil
+		}
+
+		conn.Write(resp.EncodeBulkString(stringVal))
+
+	case "RPUSH":
+		if r.Count < 3 {
+			return fmt.Errorf("RPUSH cmd requires at least 2 parameter")
+		}
+
+		key := r.Items[1].String()
+		entry := s.entries[key]
+
+		if entry == nil {
+			entry = &Entry{val: []string{}}
+			s.entries[key] = entry
+		}
+
+		if values, ok := entry.val.([]string); ok {
+			for _, item := range r.Items[2:] {
+				values = append(values, item.String())
+			}
+			conn.Write(resp.EncodeInterger(len(values)))
+		}
+
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
