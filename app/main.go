@@ -16,21 +16,6 @@ type Server struct {
 	entries map[string]*Entry
 }
 
-// type Value interface {
-// 	Type() string
-// }
-
-// type StringValue string
-
-// func (s StringValue) Type() string   { return "string" }
-// func (s StringValue) String() string { return string(s) }
-
-// type ListValue struct {
-// 	vals []string
-// }
-
-// func (l ListValue) Type() string { return "list" }
-
 type Entry struct {
 	val            any
 	expirationDate time.Time
