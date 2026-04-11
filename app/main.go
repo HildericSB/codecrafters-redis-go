@@ -141,7 +141,12 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 			for _, item := range r.Items[2:] {
 				values = append(values, item.String())
 			}
+
+			entry.val = values
+			s.entries[key] = entry
 			conn.Write(resp.EncodeInterger(len(values)))
+		} else {
+			return fmt.Errorf("entry with key %s is not a list", key)
 		}
 
 	default:
