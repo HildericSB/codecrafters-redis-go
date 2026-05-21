@@ -74,123 +74,170 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 
 	switch cmd {
 	case "ECHO":
-		conn.Write(resp.EncodeBulkString(string(r.Items[1].Data)))
-
+		return s.handleEcho(r, conn)
 	case "PING":
-		conn.Write(resp.EncodeSimpleString("PONG"))
-
+		return s.handlePing(conn)
 	case "SET":
-		if r.Count < 2 {
-			return fmt.Errorf("SET cmd requires at least 1 parameters")
-		}
-		key := r.Items[1].String()
-		val := r.Items[2].String()
-
-		expiry, err := parseExpiry(r)
-		if err != nil {
-			return err
-		}
-
-		v := string(val)
-
-		s.entries[key] = &Entry{val: v, expirationDate: expiry}
-		conn.Write(resp.EncodeSimpleString("OK"))
-
+		return s.handleSet(r, conn)
 	case "GET":
-		if r.Count < 2 {
-			return fmt.Errorf("GET cmd requires at least 1 parameter")
-		}
-
-		key := r.Items[1].String()
-		entry := s.entries[key]
-		var stringVal string
-
-		if entry == nil {
-			conn.Write([]byte("$-1\r\n"))
-			return nil
-		}
-
-		if value, ok := entry.val.(string); !ok {
-			return fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
-		} else {
-			stringVal = value
-		}
-
-		if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
-			delete(s.entries, key)
-			conn.Write([]byte("$-1\r\n"))
-			return nil
-		}
-
-		conn.Write(resp.EncodeBulkString(stringVal))
-
+		return s.handleGet(r, conn)
 	case "RPUSH":
-		if r.Count < 3 {
-			return fmt.Errorf("RPUSH cmd requires at least 2 parameter")
-		}
-
-		key := r.Items[1].String()
-		entry := s.entries[key]
-
-		if entry == nil {
-			entry = &Entry{val: []string{}}
-			s.entries[key] = entry
-		}
-
-		if values, ok := entry.val.([]string); ok {
-			for _, item := range r.Items[2:] {
-				values = append(values, item.String())
-			}
-
-			entry.val = values
-			s.entries[key] = entry
-			conn.Write(resp.EncodeInteger(len(values)))
-		} else {
-			return fmt.Errorf("entry with key %s is not a list", key)
-		}
-
+		return s.handleRpush(r, conn)
 	case "LRANGE":
-		// 	# List items from index 2 to 4
-		// > LRANGE list_key 2 4
-		// 1) "c"
-		// 2) "d"
-		// 3) "e"
-		if r.Count < 4 {
-			return fmt.Errorf("LRANGE cmd requires at least 3 parameter")
-		}
-
-		key := r.Items[1].String()
-		entry := s.entries[key]
-		startIndex := r.Items[2].Int()
-		endIndex := r.Items[3].Int()
-
-		if entry == nil {
-			conn.Write([]byte("*0\r\n"))
-			return nil
-		}
-
-		var res []resp.RESP
-		if values, ok := entry.val.([]string); ok {
-			if startIndex < 0 {
-				startIndex = max(startIndex+len(values), 0)
-
-			}
-			if endIndex < 0 {
-				endIndex = max(endIndex+len(values), 0)
-			}
-			for i := startIndex; i < len(values) && i <= endIndex; i++ {
-				res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(values[i])})
-			}
-
-			conn.Write(resp.EncodeArray(res))
-		} else {
-			return fmt.Errorf("entry with key %s is not a list", key)
-		}
-
+		return s.handleLrange(r, conn)
+	case "LPUSH":
+		return s.handleLpush(r, conn)
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
+}
 
+func (s *Server) handleEcho(r resp.RESP, conn net.Conn) error {
+	conn.Write(resp.EncodeBulkString(string(r.Items[1].Data)))
+	return nil
+}
+
+func (s *Server) handlePing(conn net.Conn) error {
+	conn.Write(resp.EncodeSimpleString("PONG"))
+	return nil
+}
+
+func (s *Server) handleSet(r resp.RESP, conn net.Conn) error {
+	if r.Count < 2 {
+		return fmt.Errorf("SET cmd requires at least 1 parameters")
+	}
+	key := r.Items[1].String()
+	val := r.Items[2].String()
+
+	expiry, err := parseExpiry(r)
+	if err != nil {
+		return err
+	}
+
+	v := string(val)
+
+	s.entries[key] = &Entry{val: v, expirationDate: expiry}
+	conn.Write(resp.EncodeSimpleString("OK"))
+	return nil
+}
+
+func (s *Server) handleGet(r resp.RESP, conn net.Conn) error {
+	if r.Count < 2 {
+		return fmt.Errorf("GET cmd requires at least 1 parameter")
+	}
+
+	key := r.Items[1].String()
+	entry := s.entries[key]
+	var stringVal string
+
+	if entry == nil {
+		conn.Write([]byte("$-1\r\n"))
+		return nil
+	}
+
+	if value, ok := entry.val.(string); !ok {
+		return fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
+	} else {
+		stringVal = value
+	}
+
+	if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
+		delete(s.entries, key)
+		conn.Write([]byte("$-1\r\n"))
+		return nil
+	}
+
+	conn.Write(resp.EncodeBulkString(stringVal))
+	return nil
+}
+
+func (s *Server) handleRpush(r resp.RESP, conn net.Conn) error {
+	if r.Count < 3 {
+		return fmt.Errorf("RPUSH cmd requires at least 2 parameter")
+	}
+
+	key := r.Items[1].String()
+	entry := s.entries[key]
+
+	if entry == nil {
+		entry = &Entry{val: []string{}}
+		s.entries[key] = entry
+	}
+
+	if values, ok := entry.val.([]string); ok {
+		for _, item := range r.Items[2:] {
+			values = append(values, item.String())
+		}
+
+		entry.val = values
+		s.entries[key] = entry
+		conn.Write(resp.EncodeInteger(len(values)))
+	} else {
+		return fmt.Errorf("entry with key %s is not a list", key)
+	}
+	return nil
+}
+
+func (s *Server) handleLpush(r resp.RESP, conn net.Conn) error {
+	if r.Count < 3 {
+		return fmt.Errorf("LPUSH cmd requires at least 2 parameter")
+	}
+
+	key := r.Items[1].String()
+	entry := s.entries[key]
+
+	if entry == nil {
+		entry = &Entry{val: []string{}}
+		s.entries[key] = entry
+	}
+
+	if values, ok := entry.val.([]string); ok {
+		for _, item := range r.Items[2:] {
+			values = append([]string{item.String()}, values...)
+		}
+
+		entry.val = values
+		s.entries[key] = entry
+		conn.Write(resp.EncodeInteger(len(values)))
+	} else {
+		return fmt.Errorf("entry with key %s is not a list", key)
+	}
+	return nil
+
+}
+
+func (s *Server) handleLrange(r resp.RESP, conn net.Conn) error {
+	if r.Count < 4 {
+		return fmt.Errorf("LRANGE cmd requires at least 3 parameter")
+	}
+
+	key := r.Items[1].String()
+	entry := s.entries[key]
+	startIndex := r.Items[2].Int()
+	endIndex := r.Items[3].Int()
+
+	if entry == nil {
+		conn.Write([]byte("*0\r\n"))
+		return nil
+	}
+
+	var res []resp.RESP
+	if values, ok := entry.val.([]string); ok {
+		if startIndex < 0 {
+			startIndex = max(startIndex+len(values), 0)
+
+		}
+		if endIndex < 0 {
+			endIndex = max(endIndex+len(values), 0)
+		}
+		for i := startIndex; i < len(values) && i <= endIndex; i++ {
+			res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(values[i])})
+		}
+
+		conn.Write(resp.EncodeArray(res))
+	} else {
+		return fmt.Errorf("entry with key %s is not a list", key)
+	}
 	return nil
 }
 
