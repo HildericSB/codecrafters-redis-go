@@ -37,9 +37,9 @@ func (r RESP) String() string {
 	return string(r.Data)
 }
 
-func (r RESP) Int() int64 {
+func (r RESP) Int() int {
 	x, _ := strconv.ParseInt(r.String(), 10, 64)
-	return x
+	return int(x)
 }
 
 func (r RESP) Float() float64 {
@@ -55,12 +55,47 @@ func EncodeSimpleString(str string) []byte {
 	return fmt.Appendf(nil, "+%s\r\n", str)
 }
 
-func EncodeInterger(val int) []byte {
+func EncodeInteger(val int) []byte {
 	return fmt.Appendf(nil, ":%d\r\n", val)
 }
 
 func EncodeBulkString(str string) []byte {
 	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(str), str)
+}
+
+func EncodeArray(array []RESP) []byte {
+	res := "*" + strconv.Itoa(len(array)) + "\r\n"
+	for _, resp := range array {
+		switch resp.Type {
+		case String:
+			res += string(EncodeSimpleString(resp.String()))
+		case Integer:
+			res += string(EncodeInteger(resp.Int()))
+		case Bulk:
+			res += string(EncodeBulkString(resp.String()))
+		case Array:
+			res += string(EncodeArray(resp.Items))
+		}
+	}
+
+	return []byte(res)
+}
+
+func ConvertArrayToResp(array any) []RESP {
+	res := make([]RESP, 0, len(array.([]any)))
+	for _, item := range array.([]any) {
+		switch v := item.(type) {
+		case string:
+			res = append(res, RESP{Type: String, Data: []byte(v)})
+		case int:
+			res = append(res, RESP{Type: Integer, Data: []byte(strconv.Itoa(v))})
+		case []byte:
+			res = append(res, RESP{Type: Bulk, Data: v})
+		case []any:
+			res = append(res, RESP{Type: Array, Items: ConvertArrayToResp(v)})
+		}
+	}
+	return res
 }
 
 // readRESP : use a reader to return a RESP

@@ -144,7 +144,38 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 
 			entry.val = values
 			s.entries[key] = entry
-			conn.Write(resp.EncodeInterger(len(values)))
+			conn.Write(resp.EncodeInteger(len(values)))
+		} else {
+			return fmt.Errorf("entry with key %s is not a list", key)
+		}
+
+	case "LRANGE":
+		// 	# List items from index 2 to 4
+		// > LRANGE list_key 2 4
+		// 1) "c"
+		// 2) "d"
+		// 3) "e"
+		if r.Count < 4 {
+			return fmt.Errorf("LRANGE cmd requires at least 3 parameter")
+		}
+
+		key := r.Items[1].String()
+		entry := s.entries[key]
+		startIndex := r.Items[2].Int()
+		endIndex := r.Items[3].Int()
+
+		if entry == nil {
+			conn.Write([]byte("*0\r\n"))
+			return nil
+		}
+
+		var res []resp.RESP
+		if values, ok := entry.val.([]string); ok {
+			for i := startIndex; i < len(values) && i <= endIndex; i++ {
+				res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(values[i])})
+			}
+
+			conn.Write(resp.EncodeArray(res))
 		} else {
 			return fmt.Errorf("entry with key %s is not a list", key)
 		}
