@@ -105,15 +105,15 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		entry := s.entries[key]
 		var stringVal string
 
+		if entry == nil {
+			conn.Write([]byte("$-1\r\n"))
+			return nil
+		}
+
 		if value, ok := entry.val.(string); !ok {
 			return fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
 		} else {
 			stringVal = value
-		}
-
-		if entry == nil {
-			conn.Write([]byte("$-1\r\n"))
-			return nil
 		}
 
 		if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
@@ -171,6 +171,16 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 
 		var res []resp.RESP
 		if values, ok := entry.val.([]string); ok {
+			if startIndex < 0 {
+				startIndex += len(values)
+				if startIndex < 0 {
+					startIndex = 0
+				}
+
+			}
+			if endIndex < 0 {
+				endIndex += len(values)
+			}
 			for i := startIndex; i < len(values) && i <= endIndex; i++ {
 				res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(values[i])})
 			}

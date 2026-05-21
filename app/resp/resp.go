@@ -26,14 +26,6 @@ type RESP struct {
 }
 
 func (r RESP) String() string {
-	// if r.Type == Array {
-	// 	var res string
-	// 	for _, e := range r.Items {
-	// 		res = "[array]\n" + res + e.String() + " "
-	// 	}
-	// 	return res
-	// }
-
 	return string(r.Data)
 }
 
@@ -79,23 +71,6 @@ func EncodeArray(array []RESP) []byte {
 	}
 
 	return []byte(res)
-}
-
-func ConvertArrayToResp(array any) []RESP {
-	res := make([]RESP, 0, len(array.([]any)))
-	for _, item := range array.([]any) {
-		switch v := item.(type) {
-		case string:
-			res = append(res, RESP{Type: String, Data: []byte(v)})
-		case int:
-			res = append(res, RESP{Type: Integer, Data: []byte(strconv.Itoa(v))})
-		case []byte:
-			res = append(res, RESP{Type: Bulk, Data: v})
-		case []any:
-			res = append(res, RESP{Type: Array, Items: ConvertArrayToResp(v)})
-		}
-	}
-	return res
 }
 
 // readRESP : use a reader to return a RESP
