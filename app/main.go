@@ -172,14 +172,11 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		var res []resp.RESP
 		if values, ok := entry.val.([]string); ok {
 			if startIndex < 0 {
-				startIndex += len(values)
-				if startIndex < 0 {
-					startIndex = 0
-				}
+				startIndex += max(len(values)+startIndex, 0)
 
 			}
 			if endIndex < 0 {
-				endIndex += len(values)
+				endIndex += max(len(values)+endIndex, 0)
 			}
 			for i := startIndex; i < len(values) && i <= endIndex; i++ {
 				res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(values[i])})
