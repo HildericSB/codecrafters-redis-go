@@ -71,29 +71,30 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 	cmd := strings.ToUpper(r.Items[0].String())
+	args := r.Items[1:]
 
 	switch cmd {
 	case "ECHO":
-		return s.handleEcho(r, conn)
+		return s.handleEcho(args, conn)
 	case "PING":
 		return s.handlePing(conn)
 	case "SET":
-		return s.handleSet(r, conn)
+		return s.handleSet(args, conn)
 	case "GET":
-		return s.handleGet(r, conn)
+		return s.handleGet(args, conn)
 	case "RPUSH":
-		return s.handleRpush(r, conn)
+		return s.handleRpush(args, conn)
 	case "LRANGE":
-		return s.handleLrange(r, conn)
+		return s.handleLrange(args, conn)
 	case "LPUSH":
-		return s.handleLpush(r, conn)
+		return s.handleLpush(args, conn)
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
 }
 
-func (s *Server) handleEcho(r resp.RESP, conn net.Conn) error {
-	conn.Write(resp.EncodeBulkString(string(r.Items[1].Data)))
+func (s *Server) handleEcho(args []resp.RESP, conn net.Conn) error {
+	conn.Write(resp.EncodeBulkString(string(args[0].Data)))
 	return nil
 }
 
@@ -102,43 +103,39 @@ func (s *Server) handlePing(conn net.Conn) error {
 	return nil
 }
 
-func (s *Server) handleSet(r resp.RESP, conn net.Conn) error {
-	if r.Count < 2 {
-		return fmt.Errorf("SET cmd requires at least 1 parameters")
+func (s *Server) handleSet(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 2 {
+		return fmt.Errorf("SET cmd requires at least 2 arguments")
 	}
-	key := r.Items[1].String()
-	val := r.Items[2].String()
+	key := args[0].String()
+	val := args[1].String()
 
-	expiry, err := parseExpiry(r)
+	expiry, err := parseExpiry(args)
 	if err != nil {
 		return err
 	}
 
-	v := string(val)
-
-	s.entries[key] = &Entry{val: v, expirationDate: expiry}
+	s.entries[key] = &Entry{val: val, expirationDate: expiry}
 	conn.Write(resp.EncodeSimpleString("OK"))
 	return nil
 }
 
-func (s *Server) handleGet(r resp.RESP, conn net.Conn) error {
-	if r.Count < 2 {
-		return fmt.Errorf("GET cmd requires at least 1 parameter")
+func (s *Server) handleGet(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 1 {
+		return fmt.Errorf("GET cmd requires at least 1 argument")
 	}
 
-	key := r.Items[1].String()
+	key := args[0].String()
 	entry := s.entries[key]
-	var stringVal string
 
 	if entry == nil {
 		conn.Write([]byte("$-1\r\n"))
 		return nil
 	}
 
-	if value, ok := entry.val.(string); !ok {
+	value, ok := entry.val.(string)
+	if !ok {
 		return fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
-	} else {
-		stringVal = value
 	}
 
 	if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
@@ -147,16 +144,16 @@ func (s *Server) handleGet(r resp.RESP, conn net.Conn) error {
 		return nil
 	}
 
-	conn.Write(resp.EncodeBulkString(stringVal))
+	conn.Write(resp.EncodeBulkString(value))
 	return nil
 }
 
-func (s *Server) handleRpush(r resp.RESP, conn net.Conn) error {
-	if r.Count < 3 {
-		return fmt.Errorf("RPUSH cmd requires at least 2 parameter")
+func (s *Server) handleRpush(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 2 {
+		return fmt.Errorf("RPUSH cmd requires at least 2 arguments")
 	}
 
-	key := r.Items[1].String()
+	key := args[0].String()
 	entry := s.entries[key]
 
 	if entry == nil {
@@ -165,7 +162,7 @@ func (s *Server) handleRpush(r resp.RESP, conn net.Conn) error {
 	}
 
 	if values, ok := entry.val.([]string); ok {
-		for _, item := range r.Items[2:] {
+		for _, item := range args[1:] {
 			values = append(values, item.String())
 		}
 
@@ -178,12 +175,12 @@ func (s *Server) handleRpush(r resp.RESP, conn net.Conn) error {
 	return nil
 }
 
-func (s *Server) handleLpush(r resp.RESP, conn net.Conn) error {
-	if r.Count < 3 {
-		return fmt.Errorf("LPUSH cmd requires at least 2 parameter")
+func (s *Server) handleLpush(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 2 {
+		return fmt.Errorf("LPUSH cmd requires at least 2 arguments")
 	}
 
-	key := r.Items[1].String()
+	key := args[0].String()
 	entry := s.entries[key]
 
 	if entry == nil {
@@ -192,7 +189,7 @@ func (s *Server) handleLpush(r resp.RESP, conn net.Conn) error {
 	}
 
 	if values, ok := entry.val.([]string); ok {
-		for _, item := range r.Items[2:] {
+		for _, item := range args[1:] {
 			values = append([]string{item.String()}, values...)
 		}
 
@@ -203,18 +200,17 @@ func (s *Server) handleLpush(r resp.RESP, conn net.Conn) error {
 		return fmt.Errorf("entry with key %s is not a list", key)
 	}
 	return nil
-
 }
 
-func (s *Server) handleLrange(r resp.RESP, conn net.Conn) error {
-	if r.Count < 4 {
-		return fmt.Errorf("LRANGE cmd requires at least 3 parameter")
+func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 3 {
+		return fmt.Errorf("LRANGE cmd requires at least 3 arguments")
 	}
 
-	key := r.Items[1].String()
+	key := args[0].String()
 	entry := s.entries[key]
-	startIndex := r.Items[2].Int()
-	endIndex := r.Items[3].Int()
+	startIndex := args[1].Int()
+	endIndex := args[2].Int()
 
 	if entry == nil {
 		conn.Write([]byte("*0\r\n"))
@@ -225,7 +221,6 @@ func (s *Server) handleLrange(r resp.RESP, conn net.Conn) error {
 	if values, ok := entry.val.([]string); ok {
 		if startIndex < 0 {
 			startIndex = max(startIndex+len(values), 0)
-
 		}
 		if endIndex < 0 {
 			endIndex = max(endIndex+len(values), 0)
@@ -241,18 +236,18 @@ func (s *Server) handleLrange(r resp.RESP, conn net.Conn) error {
 	return nil
 }
 
-func parseExpiry(r resp.RESP) (time.Time, error) {
-	if r.Count <= 3 {
+func parseExpiry(args []resp.RESP) (time.Time, error) {
+	if len(args) <= 2 {
 		return time.Time{}, nil
 	}
 
-	option := strings.ToUpper(r.Items[3].String())
+	option := strings.ToUpper(args[2].String())
 	switch option {
 	case "PX":
-		if len(r.Items) < 5 {
+		if len(args) < 4 {
 			return time.Time{}, fmt.Errorf("PX requires a value")
 		}
-		return time.Now().Add(time.Millisecond * time.Duration(r.Items[4].Int())), nil
+		return time.Now().Add(time.Millisecond * time.Duration(args[3].Int())), nil
 	default:
 		return time.Time{}, fmt.Errorf("unknown option: %s", option)
 	}
