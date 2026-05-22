@@ -88,6 +88,8 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		return s.handleLrange(args, conn)
 	case "LPUSH":
 		return s.handleLpush(args, conn)
+	case "LLEN":
+		return s.handleLlen(args, conn)
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
@@ -233,6 +235,27 @@ func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
 	} else {
 		return fmt.Errorf("entry with key %s is not a list", key)
 	}
+	return nil
+}
+
+func (s *Server) handleLlen(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 1 {
+		return fmt.Errorf("LLEN cmd requires at least 1 parameters")
+	}
+	key := args[0].String()
+	entry := s.entries[key]
+
+	if entry == nil {
+		conn.Write(resp.EncodeInteger(0))
+		return nil
+	}
+
+	if values, ok := entry.val.([]string); ok {
+		conn.Write(resp.EncodeInteger(len(values)))
+	} else {
+		return fmt.Errorf("entry with key %s is not a list", key)
+	}
+
 	return nil
 }
 
