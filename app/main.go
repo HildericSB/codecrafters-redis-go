@@ -270,17 +270,34 @@ func (s *Server) handleLpop(args []resp.RESP, conn net.Conn) error {
 	entry := s.entries[key]
 
 	if entry == nil {
-		conn.Write(resp.EncodeBulkString(""))
+		conn.Write([]byte("$-1\r\n"))
 		return nil
 	}
 
-	if values, ok := entry.val.([]string); ok {
-		elem := values[0]
-		entry.val = values[1:]
-		conn.Write(resp.EncodeBulkString(elem))
-	} else {
+	values, ok := entry.val.([]string)
+	if !ok {
 		return fmt.Errorf("entry with key %s is not a list", key)
 	}
+
+	withCount := len(args) == 2
+	endIndex := 1
+	if withCount {
+		endIndex = min(args[1].Int(), len(values))
+	}
+
+	elems := values[0:endIndex]
+	entry.val = values[endIndex:]
+
+	if !withCount {
+		conn.Write(resp.EncodeBulkString(elems[0]))
+	} else {
+		var res []resp.RESP
+		for _, v := range elems {
+			res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(v)})
+		}
+		conn.Write(resp.EncodeArray(res))
+	}
+
 	return nil
 }
 
