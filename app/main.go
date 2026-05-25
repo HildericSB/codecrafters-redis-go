@@ -90,6 +90,8 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		return s.handleLpush(args, conn)
 	case "LLEN":
 		return s.handleLlen(args, conn)
+	case "LPOP":
+		return s.handleLpop(args, conn)
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
@@ -256,6 +258,29 @@ func (s *Server) handleLlen(args []resp.RESP, conn net.Conn) error {
 		return fmt.Errorf("entry with key %s is not a list", key)
 	}
 
+	return nil
+}
+
+func (s *Server) handleLpop(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 1 {
+		return fmt.Errorf("LPOP cmd requires at least 1 parameters")
+	}
+
+	key := args[0].String()
+	entry := s.entries[key]
+
+	if entry == nil {
+		conn.Write(resp.EncodeBulkString(""))
+		return nil
+	}
+
+	if values, ok := entry.val.([]string); ok {
+		elem := values[0]
+		entry.val = values[1:]
+		conn.Write(resp.EncodeBulkString(elem))
+	} else {
+		return fmt.Errorf("entry with key %s is not a list", key)
+	}
 	return nil
 }
 
