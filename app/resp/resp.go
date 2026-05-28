@@ -60,7 +60,15 @@ func EncodeBulkString(str *string) []byte {
 	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(*str), *str)
 }
 
-func EncodeArray(array []RESP) []byte {
+func EncodeArray(items []string) []byte {
+	res := "*" + strconv.Itoa(len(items)) + "\r\n"
+	for _, s := range items {
+		res += string(EncodeBulkString(Ptr(s)))
+	}
+	return []byte(res)
+}
+
+func EncodeRESPArray(array []RESP) []byte {
 	res := "*" + strconv.Itoa(len(array)) + "\r\n"
 	for _, resp := range array {
 		switch resp.Type {
@@ -71,10 +79,9 @@ func EncodeArray(array []RESP) []byte {
 		case Bulk:
 			res += string(EncodeBulkString(Ptr(resp.String())))
 		case Array:
-			res += string(EncodeArray(resp.Items))
+			res += string(EncodeRESPArray(resp.Items))
 		}
 	}
-
 	return []byte(res)
 }
 

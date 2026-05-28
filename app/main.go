@@ -241,7 +241,6 @@ func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
 		return nil
 	}
 
-	var res []resp.RESP
 	if values, ok := entry.val.([]string); ok {
 		if startIndex < 0 {
 			startIndex = max(startIndex+len(values), 0)
@@ -249,10 +248,10 @@ func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
 		if endIndex < 0 {
 			endIndex = max(endIndex+len(values), 0)
 		}
+		var res []string
 		for i := startIndex; i < len(values) && i <= endIndex; i++ {
-			res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(values[i])})
+			res = append(res, values[i])
 		}
-
 		conn.Write(resp.EncodeArray(res))
 	} else {
 		return fmt.Errorf("entry with key %s is not a list", key)
@@ -315,11 +314,7 @@ func (s *Server) handleLpop(args []resp.RESP, conn net.Conn) error {
 	if !withCount {
 		conn.Write(resp.EncodeBulkString(&elems[0]))
 	} else {
-		var res []resp.RESP
-		for _, v := range elems {
-			res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(v)})
-		}
-		conn.Write(resp.EncodeArray(res))
+		conn.Write(resp.EncodeArray(elems))
 	}
 
 	return nil
@@ -342,10 +337,7 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 
 		elem := values[0]
 		entry.val = values[1:]
-		conn.Write(resp.EncodeArray([]resp.RESP{
-			{Type: resp.Bulk, Data: []byte(key)},
-			{Type: resp.Bulk, Data: []byte(elem)},
-		}))
+		conn.Write(resp.EncodeArray([]string{key, elem}))
 
 	}
 
@@ -356,10 +348,7 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 
 	select {
 	case val := <-ch:
-		conn.Write(resp.EncodeArray([]resp.RESP{
-			{Type: resp.Bulk, Data: []byte(key)},
-			{Type: resp.Bulk, Data: []byte(val)},
-		}))
+		conn.Write(resp.EncodeArray([]string{key, val}))
 	}
 
 	return nil
