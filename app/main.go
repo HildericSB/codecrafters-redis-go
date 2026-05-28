@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
@@ -14,6 +15,8 @@ import (
 
 type Server struct {
 	entries map[string]*Entry
+	mu      sync.Mutex
+	waiters map[string][]chan string
 }
 
 type Entry struct {
@@ -31,6 +34,7 @@ func main() {
 
 	s := Server{
 		entries: make(map[string]*Entry),
+		waiters: make(map[string][]chan string),
 	}
 
 	for {
@@ -92,13 +96,15 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		return s.handleLlen(args, conn)
 	case "LPOP":
 		return s.handleLpop(args, conn)
+	case "BLPOP":
+		return s.handleBLPOP(args, conn)
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
 }
 
 func (s *Server) handleEcho(args []resp.RESP, conn net.Conn) error {
-	conn.Write(resp.EncodeBulkString(string(args[0].Data)))
+	conn.Write(resp.EncodeBulkString(resp.Ptr(string(args[0].Data))))
 	return nil
 }
 
@@ -148,7 +154,7 @@ func (s *Server) handleGet(args []resp.RESP, conn net.Conn) error {
 		return nil
 	}
 
-	conn.Write(resp.EncodeBulkString(value))
+	conn.Write(resp.EncodeBulkString(&value))
 	return nil
 }
 
@@ -165,17 +171,31 @@ func (s *Server) handleRpush(args []resp.RESP, conn net.Conn) error {
 		s.entries[key] = entry
 	}
 
-	if values, ok := entry.val.([]string); ok {
-		for _, item := range args[1:] {
-			values = append(values, item.String())
-		}
-
-		entry.val = values
-		s.entries[key] = entry
-		conn.Write(resp.EncodeInteger(len(values)))
-	} else {
+	values, ok := entry.val.([]string)
+	if !ok {
 		return fmt.Errorf("entry with key %s is not a list", key)
 	}
+
+	for _, item := range args[1:] {
+		values = append(values, item.String())
+	}
+
+	entry.val = values
+	s.entries[key] = entry
+
+	s.mu.Lock()
+
+	if len(s.waiters[key]) != 0 {
+		val := values[0]
+		entry.val = values[1:]
+		s.waiters[key][0] <- val
+		s.waiters[key] = s.waiters[key][1:]
+
+	}
+	s.mu.Unlock()
+
+	conn.Write(resp.EncodeInteger(len(values)))
+
 	return nil
 }
 
@@ -288,14 +308,58 @@ func (s *Server) handleLpop(args []resp.RESP, conn net.Conn) error {
 	elems := values[0:endIndex]
 	entry.val = values[endIndex:]
 
+	if len(entry.val.([]string)) == 0 {
+		delete(s.entries, key)
+	}
+
 	if !withCount {
-		conn.Write(resp.EncodeBulkString(elems[0]))
+		conn.Write(resp.EncodeBulkString(&elems[0]))
 	} else {
 		var res []resp.RESP
 		for _, v := range elems {
 			res = append(res, resp.RESP{Type: resp.Bulk, Data: []byte(v)})
 		}
 		conn.Write(resp.EncodeArray(res))
+	}
+
+	return nil
+}
+
+func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
+	if len(args) < 2 {
+		return fmt.Errorf("BLPOP cmd requires at least 2 parameters")
+	}
+
+	key := args[0].String()
+	entry := s.entries[key]
+	// timeoutSecs := args[1]
+
+	if entry != nil {
+		values, ok := entry.val.([]string)
+		if !ok {
+			return fmt.Errorf("entry with key %s is not a list", key)
+		}
+
+		elem := values[0]
+		entry.val = values[1:]
+		conn.Write(resp.EncodeArray([]resp.RESP{
+			{Type: resp.Bulk, Data: []byte(key)},
+			{Type: resp.Bulk, Data: []byte(elem)},
+		}))
+
+	}
+
+	ch := make(chan string, 1)
+	s.mu.Lock()
+	s.waiters[key] = append(s.waiters[key], ch)
+	s.mu.Unlock()
+
+	select {
+	case val := <-ch:
+		conn.Write(resp.EncodeArray([]resp.RESP{
+			{Type: resp.Bulk, Data: []byte(key)},
+			{Type: resp.Bulk, Data: []byte(val)},
+		}))
 	}
 
 	return nil

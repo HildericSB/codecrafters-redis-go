@@ -43,6 +43,8 @@ func (r RESP) Bytes() []byte {
 	return r.Data
 }
 
+func Ptr(s string) *string { return &s }
+
 func EncodeSimpleString(str string) []byte {
 	return fmt.Appendf(nil, "+%s\r\n", str)
 }
@@ -51,8 +53,11 @@ func EncodeInteger(val int) []byte {
 	return fmt.Appendf(nil, ":%d\r\n", val)
 }
 
-func EncodeBulkString(str string) []byte {
-	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(str), str)
+func EncodeBulkString(str *string) []byte {
+	if str == nil {
+		return []byte("$-1\r\n")
+	}
+	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(*str), *str)
 }
 
 func EncodeArray(array []RESP) []byte {
@@ -64,7 +69,7 @@ func EncodeArray(array []RESP) []byte {
 		case Integer:
 			res += string(EncodeInteger(resp.Int()))
 		case Bulk:
-			res += string(EncodeBulkString(resp.String()))
+			res += string(EncodeBulkString(Ptr(resp.String())))
 		case Array:
 			res += string(EncodeArray(resp.Items))
 		}
