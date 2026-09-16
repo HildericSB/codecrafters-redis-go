@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -67,7 +68,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 		fmt.Print(val)
 
 		if val.Type == resp.Array {
-			s.handleCmd(val, conn)
+			err = s.handleCmd(val, conn)
+			if err != nil {
+				log.Warn("handling connection failed : %w", err)
+			}
 		}
 	}
 
@@ -327,7 +331,7 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 
 	key := args[0].String()
 	entry := s.entries[key]
-	// timeoutSecs := args[1]
+	timeoutSecs := args[1].Float()
 
 	if entry != nil {
 		values, ok := entry.val.([]string)
@@ -335,9 +339,12 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 			return fmt.Errorf("entry with key %s is not a list", key)
 		}
 
-		elem := values[0]
-		entry.val = values[1:]
-		conn.Write(resp.EncodeArray([]string{key, elem}))
+		if len(values) > 0 {
+			elem := values[0]
+			entry.val = values[1:]
+			conn.Write(resp.EncodeArray([]string{key, elem}))
+			return nil
+		}
 
 	}
 
@@ -346,9 +353,22 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 	s.waiters[key] = append(s.waiters[key], ch)
 	s.mu.Unlock()
 
+	var timeoutCh <-chan time.Time
+	if timeoutSecs > 0 {
+		timer := time.NewTimer(time.Duration(timeoutSecs * float64(time.Second)))
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
+
 	select {
 	case val := <-ch:
 		conn.Write(resp.EncodeArray([]string{key, val}))
+	case <-timeoutCh:
+		s.mu.Lock()
+		delete(s.waiters, key)
+		s.mu.Unlock()
+
+		conn.Write(resp.EncodeArray([]string{}))
 	}
 
 	return nil
