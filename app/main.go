@@ -101,6 +101,8 @@ func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
 		return s.handleLpop(args, conn)
 	case "BLPOP":
 		return s.handleBLPOP(args, conn)
+	case "TYPE":
+		return s.handleType(args, conn)
 	default:
 		return fmt.Errorf("Unknown cmd : %v", cmd)
 	}
