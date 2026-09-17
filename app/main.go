@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -70,7 +70,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		if val.Type == resp.Array {
 			err = s.handleCmd(val, conn)
 			if err != nil {
-				log.Warn("handling connection failed : %w", err)
+				fmt.Println("handling connection failed : %w", err)
 			}
 		}
 	}
@@ -188,7 +188,6 @@ func (s *Server) handleRpush(args []resp.RESP, conn net.Conn) error {
 	s.entries[key] = entry
 
 	s.mu.Lock()
-
 	if len(s.waiters[key]) != 0 {
 		val := values[0]
 		entry.val = values[1:]
@@ -252,7 +251,7 @@ func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
 		if endIndex < 0 {
 			endIndex = max(endIndex+len(values), 0)
 		}
-		var res []string
+		res := []string{}
 		for i := startIndex; i < len(values) && i <= endIndex; i++ {
 			res = append(res, values[i])
 		}
@@ -329,6 +328,8 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 		return fmt.Errorf("BLPOP cmd requires at least 2 parameters")
 	}
 
+	s.mu.Lock()
+
 	key := args[0].String()
 	entry := s.entries[key]
 	timeoutSecs := args[1].Float()
@@ -349,7 +350,6 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 	}
 
 	ch := make(chan string, 1)
-	s.mu.Lock()
 	s.waiters[key] = append(s.waiters[key], ch)
 	s.mu.Unlock()
 
@@ -365,10 +365,18 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 		conn.Write(resp.EncodeArray([]string{key, val}))
 	case <-timeoutCh:
 		s.mu.Lock()
-		delete(s.waiters, key)
-		s.mu.Unlock()
-
-		conn.Write(resp.EncodeArray([]string{}))
+		idx := slices.Index(s.waiters[key], ch)
+		if idx != -1 {
+			// still waiting — genuinely timed out, nobody sent anything
+			s.waiters[key] = slices.Delete(s.waiters[key], idx, idx+1)
+			s.mu.Unlock()
+			conn.Write(resp.EncodeArray(nil))
+		} else {
+			// a pusher already claimed us right as the timer fired
+			s.mu.Unlock()
+			val := <-ch
+			conn.Write(resp.EncodeArray([]string{key, val}))
+		}
 	}
 
 	return nil

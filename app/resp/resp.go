@@ -61,10 +61,9 @@ func EncodeBulkString(str *string) []byte {
 }
 
 func EncodeArray(items []string) []byte {
-	if len(items) == 0 {
+	if items == nil {
 		return []byte("*-1\r\n")
 	}
-
 	res := "*" + strconv.Itoa(len(items)) + "\r\n"
 	for _, s := range items {
 		res += string(EncodeBulkString(Ptr(s)))
