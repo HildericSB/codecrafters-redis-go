@@ -23,13 +23,23 @@ func (s *Server) handleType(args []resp.RESP, conn net.Conn) error {
 	switch entry.val.(type) {
 	case string:
 		conn.Write(resp.EncodeSimpleString("string"))
-	case map[string][]kv:
+	case *stream:
 		conn.Write(resp.EncodeSimpleString("stream"))
 	default:
 		conn.Write(resp.EncodeSimpleString("undefined"))
 	}
 
 	return nil
+}
+
+// stream keeps entries in ascending id order
+type stream struct {
+	entries []streamEntry
+}
+
+type streamEntry struct {
+	id     string
+	fields []kv
 }
 
 type kv struct {
@@ -49,25 +59,29 @@ func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
 	key := args[0].String()
 	id := args[1].String()
 	entry := s.entries[key]
-	var streams map[string][]kv
+	var st *stream
 
 	if entry != nil {
-		if v, ok := entry.val.(map[string][]kv); ok {
-			streams = v
+		if v, ok := entry.val.(*stream); ok {
+			st = v
 		} else {
 			return fmt.Errorf("can't XADD into something else than a stream")
 		}
 	} else {
-		streams = make(map[string][]kv)
-		entry = &Entry{val: streams}
+		st = &stream{}
+		entry = &Entry{val: st}
 		s.entries[key] = entry
 	}
 
+	se := streamEntry{id: id, fields: []kv{}}
 	for i := 2; i < len(args); i += 2 {
-		field := args[i].String()
-		value := args[i+1].String()
-		streams[id] = append(streams[id], kv{k: field, v: value})
+		k := args[i].String()
+		v := args[i+1].String()
+
+		se.fields = append(se.fields, kv{k: k, v: v})
 	}
+
+	st.entries = append(st.entries, se)
 
 	conn.Write(resp.EncodeBulkString(&id))
 
