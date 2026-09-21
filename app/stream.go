@@ -45,6 +45,10 @@ type streamID struct {
 	seqNumber int
 }
 
+func (s streamID) String() string {
+	return fmt.Sprintf("%d-%d", s.msTime, s.seqNumber)
+}
+
 type kv struct {
 	k string
 	v string
@@ -81,19 +85,21 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 		return nil, fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
 	}
 
-	newStreamID, err := stringToStreamID(id)
-	if err != nil {
-		return nil, fmt.Errorf("ERR Parsing new stream id")
-	}
-
+	var last *streamID
 	if len(st.entries) >= 1 {
-		last := st.entries[len(st.entries)-1]
-		if last.id.msTime > newStreamID.msTime || (last.id.msTime == newStreamID.msTime && last.id.seqNumber >= newStreamID.seqNumber) {
-			return nil, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-		}
+		last = &st.entries[len(st.entries)-1].id
 	}
 
-	se := streamEntry{id: *newStreamID, fields: []kv{}}
+	newStreamID, err := stringToStreamID(id, last)
+	if err != nil {
+		return nil, fmt.Errorf("ERR Parsing new stream id, %w", err)
+	}
+
+	if last != nil && (last.msTime > newStreamID.msTime || (last.msTime == newStreamID.msTime && last.seqNumber >= newStreamID.seqNumber)) {
+		return nil, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+	}
+
+	se := streamEntry{id: newStreamID, fields: []kv{}}
 	for i := 2; i < len(args); i += 2 {
 		k := args[i].String()
 		v := args[i+1].String()
@@ -103,24 +109,36 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 
 	st.entries = append(st.entries, se)
 
-	return resp.EncodeBulkString(&id), nil
+	idStr := se.id.String()
+	return resp.EncodeBulkString(&idStr), nil
 }
 
-func stringToStreamID(id string) (*streamID, error) {
+func stringToStreamID(id string, last *streamID) (streamID, error) {
 	split := strings.Split(id, "-")
 	if len(split) != 2 {
-		return nil, fmt.Errorf("error splitting id %s", split)
+		return streamID{}, fmt.Errorf("error splitting id %s", split)
 	}
+	left := split[0]
+	right := split[1]
 
-	msTime, err := strconv.Atoi(split[0])
+	msTime, err := strconv.Atoi(left)
 	if err != nil {
-		return nil, fmt.Errorf("error converting msTime %s", split[0])
+		return streamID{}, fmt.Errorf("error converting msTime %s", split[0])
 	}
 
-	seqNumber, err := strconv.Atoi(split[1])
-	if err != nil {
-		return nil, fmt.Errorf("error converting seqNumber %s", split[1])
+	var seqNumber int
+	if right == "*" {
+		if last == nil {
+			seqNumber = 1
+		} else if last.msTime == msTime {
+			seqNumber = last.seqNumber + 1
+		}
+	} else {
+		seqNumber, err = strconv.Atoi(right)
+		if err != nil {
+			return streamID{}, fmt.Errorf("error converting seqNumber %s", split[1])
+		}
 	}
 
-	return &streamID{msTime: msTime, seqNumber: seqNumber}, nil
+	return streamID{msTime: msTime, seqNumber: seqNumber}, nil
 }
