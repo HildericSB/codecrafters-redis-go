@@ -2,36 +2,32 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func (s *Server) handleType(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleType(args []resp.RESP) ([]byte, error) {
 	if len(args) < 1 {
-		return fmt.Errorf("TYPE cmd requires at leat 1 argument")
+		return nil, fmt.Errorf("TYPE cmd requires at leat 1 argument")
 	}
 
 	key := args[0].String()
 	entry := s.entries[key]
 
 	if entry == nil {
-		conn.Write(resp.EncodeSimpleString("none"))
-		return nil
+		return resp.EncodeSimpleString("none"), nil
 	}
 
 	switch entry.val.(type) {
 	case string:
-		conn.Write(resp.EncodeSimpleString("string"))
+		return resp.EncodeSimpleString("string"), nil
 	case *stream:
-		conn.Write(resp.EncodeSimpleString("stream"))
+		return resp.EncodeSimpleString("stream"), nil
 	default:
-		conn.Write(resp.EncodeSimpleString("undefined"))
+		return resp.EncodeSimpleString("undefined"), nil
 	}
-
-	return nil
 }
 
 // stream keeps entries in ascending id order
@@ -54,13 +50,13 @@ type kv struct {
 	v string
 }
 
-func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 	if len(args) < 4 {
-		return fmt.Errorf("XADD cmd requires at leat 4 argument")
+		return nil, fmt.Errorf("XADD cmd requires at leat 4 argument")
 	}
 
 	if (len(args)-2)%2 != 0 {
-		return fmt.Errorf("XADD cmd requires arguments in pair")
+		return nil, fmt.Errorf("XADD cmd requires arguments in pair")
 	}
 
 	key := args[0].String()
@@ -69,11 +65,11 @@ func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
 	var st *stream
 
 	if entry != nil {
-		if v, ok := entry.val.(*stream); ok {
-			st = v
-		} else {
-			return fmt.Errorf("can't XADD into something else than a stream")
+		v, ok := entry.val.(*stream)
+		if !ok {
+			return nil, fmt.Errorf("can't XADD into something else than a stream")
 		}
+		st = v
 	} else {
 		st = &stream{}
 		entry = &Entry{val: st}
@@ -82,18 +78,18 @@ func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
 
 	// Verify id
 	if id == "0-0" {
-		return fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
+		return nil, fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
 	}
 
 	newStreamID, err := stringToStreamID(id)
 	if err != nil {
-		return fmt.Errorf("ERR Parsing new stream id")
+		return nil, fmt.Errorf("ERR Parsing new stream id")
 	}
 
 	if len(st.entries) >= 1 {
 		last := st.entries[len(st.entries)-1]
 		if last.id.msTime > newStreamID.msTime || (last.id.msTime == newStreamID.msTime && last.id.seqNumber >= newStreamID.seqNumber) {
-			return fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			return nil, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
 		}
 	}
 
@@ -107,9 +103,7 @@ func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
 
 	st.entries = append(st.entries, se)
 
-	conn.Write(resp.EncodeBulkString(&id))
-
-	return nil
+	return resp.EncodeBulkString(&id), nil
 }
 
 func stringToStreamID(id string) (*streamID, error) {

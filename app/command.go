@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"slices"
 	"strings"
 	"time"
@@ -10,64 +9,58 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func (s *Server) handleEcho(args []resp.RESP, conn net.Conn) error {
-	conn.Write(resp.EncodeBulkString(resp.Ptr(string(args[0].Data))))
-	return nil
+func (s *Server) handleEcho(args []resp.RESP) ([]byte, error) {
+	return resp.EncodeBulkString(resp.Ptr(string(args[0].Data))), nil
 }
 
-func (s *Server) handlePing(conn net.Conn) error {
-	conn.Write(resp.EncodeSimpleString("PONG"))
-	return nil
+func (s *Server) handlePing() ([]byte, error) {
+	return resp.EncodeSimpleString("PONG"), nil
 }
 
-func (s *Server) handleSet(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleSet(args []resp.RESP) ([]byte, error) {
 	if len(args) < 2 {
-		return fmt.Errorf("SET cmd requires at least 2 arguments")
+		return nil, fmt.Errorf("SET cmd requires at least 2 arguments")
 	}
 	key := args[0].String()
 	val := args[1].String()
 
 	expiry, err := parseExpiry(args)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	s.entries[key] = &Entry{val: val, expirationDate: expiry}
-	conn.Write(resp.EncodeSimpleString("OK"))
-	return nil
+	return resp.EncodeSimpleString("OK"), nil
 }
 
-func (s *Server) handleGet(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleGet(args []resp.RESP) ([]byte, error) {
 	if len(args) < 1 {
-		return fmt.Errorf("GET cmd requires at least 1 argument")
+		return nil, fmt.Errorf("GET cmd requires at least 1 argument")
 	}
 
 	key := args[0].String()
 	entry := s.entries[key]
 
 	if entry == nil {
-		conn.Write([]byte("$-1\r\n"))
-		return nil
+		return []byte("$-1\r\n"), nil
 	}
 
 	value, ok := entry.val.(string)
 	if !ok {
-		return fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
+		return nil, fmt.Errorf("GET not supported for this type of entry : %T", entry.val)
 	}
 
 	if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
 		delete(s.entries, key)
-		conn.Write([]byte("$-1\r\n"))
-		return nil
+		return []byte("$-1\r\n"), nil
 	}
 
-	conn.Write(resp.EncodeBulkString(&value))
-	return nil
+	return resp.EncodeBulkString(&value), nil
 }
 
-func (s *Server) handleRpush(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleRpush(args []resp.RESP) ([]byte, error) {
 	if len(args) < 2 {
-		return fmt.Errorf("RPUSH cmd requires at least 2 arguments")
+		return nil, fmt.Errorf("RPUSH cmd requires at least 2 arguments")
 	}
 
 	key := args[0].String()
@@ -80,7 +73,7 @@ func (s *Server) handleRpush(args []resp.RESP, conn net.Conn) error {
 
 	values, ok := entry.val.([]string)
 	if !ok {
-		return fmt.Errorf("entry with key %s is not a list", key)
+		return nil, fmt.Errorf("entry with key %s is not a list", key)
 	}
 
 	for _, item := range args[1:] {
@@ -100,14 +93,12 @@ func (s *Server) handleRpush(args []resp.RESP, conn net.Conn) error {
 	}
 	s.mu.Unlock()
 
-	conn.Write(resp.EncodeInteger(len(values)))
-
-	return nil
+	return resp.EncodeInteger(len(values)), nil
 }
 
-func (s *Server) handleLpush(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleLpush(args []resp.RESP) ([]byte, error) {
 	if len(args) < 2 {
-		return fmt.Errorf("LPUSH cmd requires at least 2 arguments")
+		return nil, fmt.Errorf("LPUSH cmd requires at least 2 arguments")
 	}
 
 	key := args[0].String()
@@ -118,23 +109,23 @@ func (s *Server) handleLpush(args []resp.RESP, conn net.Conn) error {
 		s.entries[key] = entry
 	}
 
-	if values, ok := entry.val.([]string); ok {
-		for _, item := range args[1:] {
-			values = append([]string{item.String()}, values...)
-		}
-
-		entry.val = values
-		s.entries[key] = entry
-		conn.Write(resp.EncodeInteger(len(values)))
-	} else {
-		return fmt.Errorf("entry with key %s is not a list", key)
+	values, ok := entry.val.([]string)
+	if !ok {
+		return nil, fmt.Errorf("entry with key %s is not a list", key)
 	}
-	return nil
+
+	for _, item := range args[1:] {
+		values = append([]string{item.String()}, values...)
+	}
+
+	entry.val = values
+	s.entries[key] = entry
+	return resp.EncodeInteger(len(values)), nil
 }
 
-func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleLrange(args []resp.RESP) ([]byte, error) {
 	if len(args) < 3 {
-		return fmt.Errorf("LRANGE cmd requires at least 3 arguments")
+		return nil, fmt.Errorf("LRANGE cmd requires at least 3 arguments")
 	}
 
 	key := args[0].String()
@@ -143,65 +134,61 @@ func (s *Server) handleLrange(args []resp.RESP, conn net.Conn) error {
 	endIndex := args[2].Int()
 
 	if entry == nil {
-		conn.Write([]byte("*0\r\n"))
-		return nil
-	}
-
-	if values, ok := entry.val.([]string); ok {
-		if startIndex < 0 {
-			startIndex = max(startIndex+len(values), 0)
-		}
-		if endIndex < 0 {
-			endIndex = max(endIndex+len(values), 0)
-		}
-		res := []string{}
-		for i := startIndex; i < len(values) && i <= endIndex; i++ {
-			res = append(res, values[i])
-		}
-		conn.Write(resp.EncodeArray(res))
-	} else {
-		return fmt.Errorf("entry with key %s is not a list", key)
-	}
-	return nil
-}
-
-func (s *Server) handleLlen(args []resp.RESP, conn net.Conn) error {
-	if len(args) < 1 {
-		return fmt.Errorf("LLEN cmd requires at least 1 parameters")
-	}
-	key := args[0].String()
-	entry := s.entries[key]
-
-	if entry == nil {
-		conn.Write(resp.EncodeInteger(0))
-		return nil
-	}
-
-	if values, ok := entry.val.([]string); ok {
-		conn.Write(resp.EncodeInteger(len(values)))
-	} else {
-		return fmt.Errorf("entry with key %s is not a list", key)
-	}
-
-	return nil
-}
-
-func (s *Server) handleLpop(args []resp.RESP, conn net.Conn) error {
-	if len(args) < 1 {
-		return fmt.Errorf("LPOP cmd requires at least 1 parameters")
-	}
-
-	key := args[0].String()
-	entry := s.entries[key]
-
-	if entry == nil {
-		conn.Write([]byte("$-1\r\n"))
-		return nil
+		return []byte("*0\r\n"), nil
 	}
 
 	values, ok := entry.val.([]string)
 	if !ok {
-		return fmt.Errorf("entry with key %s is not a list", key)
+		return nil, fmt.Errorf("entry with key %s is not a list", key)
+	}
+
+	if startIndex < 0 {
+		startIndex = max(startIndex+len(values), 0)
+	}
+	if endIndex < 0 {
+		endIndex = max(endIndex+len(values), 0)
+	}
+	res := []string{}
+	for i := startIndex; i < len(values) && i <= endIndex; i++ {
+		res = append(res, values[i])
+	}
+	return resp.EncodeArray(res), nil
+}
+
+func (s *Server) handleLlen(args []resp.RESP) ([]byte, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("LLEN cmd requires at least 1 parameters")
+	}
+	key := args[0].String()
+	entry := s.entries[key]
+
+	if entry == nil {
+		return resp.EncodeInteger(0), nil
+	}
+
+	values, ok := entry.val.([]string)
+	if !ok {
+		return nil, fmt.Errorf("entry with key %s is not a list", key)
+	}
+
+	return resp.EncodeInteger(len(values)), nil
+}
+
+func (s *Server) handleLpop(args []resp.RESP) ([]byte, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("LPOP cmd requires at least 1 parameters")
+	}
+
+	key := args[0].String()
+	entry := s.entries[key]
+
+	if entry == nil {
+		return []byte("$-1\r\n"), nil
+	}
+
+	values, ok := entry.val.([]string)
+	if !ok {
+		return nil, fmt.Errorf("entry with key %s is not a list", key)
 	}
 
 	withCount := len(args) == 2
@@ -218,17 +205,14 @@ func (s *Server) handleLpop(args []resp.RESP, conn net.Conn) error {
 	}
 
 	if !withCount {
-		conn.Write(resp.EncodeBulkString(&elems[0]))
-	} else {
-		conn.Write(resp.EncodeArray(elems))
+		return resp.EncodeBulkString(&elems[0]), nil
 	}
-
-	return nil
+	return resp.EncodeArray(elems), nil
 }
 
-func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
+func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 	if len(args) < 2 {
-		return fmt.Errorf("BLPOP cmd requires at least 2 parameters")
+		return nil, fmt.Errorf("BLPOP cmd requires at least 2 parameters")
 	}
 
 	s.mu.Lock()
@@ -240,14 +224,15 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 	if entry != nil {
 		values, ok := entry.val.([]string)
 		if !ok {
-			return fmt.Errorf("entry with key %s is not a list", key)
+			s.mu.Unlock()
+			return nil, fmt.Errorf("entry with key %s is not a list", key)
 		}
 
 		if len(values) > 0 {
 			elem := values[0]
 			entry.val = values[1:]
-			conn.Write(resp.EncodeArray([]string{key, elem}))
-			return nil
+			s.mu.Unlock()
+			return resp.EncodeArray([]string{key, elem}), nil
 		}
 
 	}
@@ -265,7 +250,7 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 
 	select {
 	case val := <-ch:
-		conn.Write(resp.EncodeArray([]string{key, val}))
+		return resp.EncodeArray([]string{key, val}), nil
 	case <-timeoutCh:
 		s.mu.Lock()
 		idx := slices.Index(s.waiters[key], ch)
@@ -273,16 +258,13 @@ func (s *Server) handleBLPOP(args []resp.RESP, conn net.Conn) error {
 			// still waiting — genuinely timed out, nobody sent anything
 			s.waiters[key] = slices.Delete(s.waiters[key], idx, idx+1)
 			s.mu.Unlock()
-			conn.Write(resp.EncodeArray(nil))
-		} else {
-			// a pusher already claimed us right as the timer fired
-			s.mu.Unlock()
-			val := <-ch
-			conn.Write(resp.EncodeArray([]string{key, val}))
+			return resp.EncodeArray(nil), nil
 		}
+		// a pusher already claimed us right as the timer fired
+		s.mu.Unlock()
+		val := <-ch
+		return resp.EncodeArray([]string{key, val}), nil
 	}
-
-	return nil
 }
 
 func parseExpiry(args []resp.RESP) (time.Time, error) {

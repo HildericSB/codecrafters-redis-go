@@ -67,46 +67,48 @@ func (s *Server) handleConnection(conn net.Conn) {
 		fmt.Print(val)
 
 		if val.Type == resp.Array {
-			err = s.handleCmd(val, conn)
+			out, err := s.handleCmd(val)
 			if err != nil {
 				fmt.Println("handling connection failed : ", err)
 				conn.Write(resp.EncodeSimpleError(err.Error()))
+				continue
 			}
+			conn.Write(out)
 		}
 	}
 
 }
 
-func (s *Server) handleCmd(r resp.RESP, conn net.Conn) error {
+func (s *Server) handleCmd(r resp.RESP) ([]byte, error) {
 	cmd := strings.ToUpper(r.Items[0].String())
 	args := r.Items[1:]
 
 	switch cmd {
 	case "ECHO":
-		return s.handleEcho(args, conn)
+		return s.handleEcho(args)
 	case "PING":
-		return s.handlePing(conn)
+		return s.handlePing()
 	case "SET":
-		return s.handleSet(args, conn)
+		return s.handleSet(args)
 	case "GET":
-		return s.handleGet(args, conn)
+		return s.handleGet(args)
 	case "RPUSH":
-		return s.handleRpush(args, conn)
+		return s.handleRpush(args)
 	case "LRANGE":
-		return s.handleLrange(args, conn)
+		return s.handleLrange(args)
 	case "LPUSH":
-		return s.handleLpush(args, conn)
+		return s.handleLpush(args)
 	case "LLEN":
-		return s.handleLlen(args, conn)
+		return s.handleLlen(args)
 	case "LPOP":
-		return s.handleLpop(args, conn)
+		return s.handleLpop(args)
 	case "BLPOP":
-		return s.handleBLPOP(args, conn)
+		return s.handleBLPOP(args)
 	case "TYPE":
-		return s.handleType(args, conn)
+		return s.handleType(args)
 	case "XADD":
-		return s.handleXADD(args, conn)
+		return s.handleXADD(args)
 	default:
-		return fmt.Errorf("Unknown cmd : %v", cmd)
+		return nil, fmt.Errorf("Unknown cmd : %v", cmd)
 	}
 }
