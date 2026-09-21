@@ -49,6 +49,10 @@ func EncodeSimpleString(str string) []byte {
 	return fmt.Appendf(nil, "+%s\r\n", str)
 }
 
+func EncodeSimpleError(str string) []byte {
+	return fmt.Appendf(nil, "-%s\r\n", str)
+}
+
 func EncodeInteger(val int) []byte {
 	return fmt.Appendf(nil, ":%d\r\n", val)
 }

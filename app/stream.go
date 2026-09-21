@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
@@ -38,8 +40,13 @@ type stream struct {
 }
 
 type streamEntry struct {
-	id     string
+	id     streamID
 	fields []kv
+}
+
+type streamID struct {
+	msTime    int
+	seqNumber int
 }
 
 type kv struct {
@@ -73,7 +80,24 @@ func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
 		s.entries[key] = entry
 	}
 
-	se := streamEntry{id: id, fields: []kv{}}
+	// Verify id
+	if id == "0-0" {
+		return fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
+	}
+
+	newStreamID, err := stringToStreamID(id)
+	if err != nil {
+		return fmt.Errorf("ERR Parsing new stream id")
+	}
+
+	if len(st.entries) >= 1 {
+		last := st.entries[len(st.entries)-1]
+		if last.id.msTime > newStreamID.msTime || (last.id.msTime == newStreamID.msTime && last.id.seqNumber >= newStreamID.seqNumber) {
+			return fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+		}
+	}
+
+	se := streamEntry{id: *newStreamID, fields: []kv{}}
 	for i := 2; i < len(args); i += 2 {
 		k := args[i].String()
 		v := args[i+1].String()
@@ -86,4 +110,23 @@ func (s *Server) handleXADD(args []resp.RESP, conn net.Conn) error {
 	conn.Write(resp.EncodeBulkString(&id))
 
 	return nil
+}
+
+func stringToStreamID(id string) (*streamID, error) {
+	split := strings.Split(id, "-")
+	if len(split) != 2 {
+		return nil, fmt.Errorf("error splitting id %s", split)
+	}
+
+	msTime, err := strconv.Atoi(split[0])
+	if err != nil {
+		return nil, fmt.Errorf("error converting msTime %s", split[0])
+	}
+
+	seqNumber, err := strconv.Atoi(split[1])
+	if err != nil {
+		return nil, fmt.Errorf("error converting seqNumber %s", split[1])
+	}
+
+	return &streamID{msTime: msTime, seqNumber: seqNumber}, nil
 }
