@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
@@ -77,7 +78,6 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 	} else {
 		st = &stream{}
 		entry = &Entry{val: st}
-		s.entries[key] = entry
 	}
 
 	// Verify id
@@ -109,36 +109,50 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 
 	st.entries = append(st.entries, se)
 
+	s.entries[key] = entry
+
 	idStr := se.id.String()
 	return resp.EncodeBulkString(&idStr), nil
 }
 
 func stringToStreamID(id string, last *streamID) (streamID, error) {
+	if id == "*" {
+		msTime := int(time.Now().UnixMilli())
+		if last != nil {
+			msTime = max(msTime, last.msTime)
+		}
+		return autoSeq(msTime, last), nil
+	}
+
 	split := strings.Split(id, "-")
 	if len(split) != 2 {
-		return streamID{}, fmt.Errorf("error splitting id %s", split)
+		return streamID{}, fmt.Errorf("error splitting id %q", id)
 	}
-	left := split[0]
-	right := split[1]
 
-	msTime, err := strconv.Atoi(left)
+	msTime, err := strconv.Atoi(split[0])
 	if err != nil {
 		return streamID{}, fmt.Errorf("error converting msTime %s", split[0])
 	}
 
-	var seqNumber int
-	if right == "*" {
-		if last == nil {
-			seqNumber = 1
-		} else if last.msTime == msTime {
-			seqNumber = last.seqNumber + 1
-		}
-	} else {
-		seqNumber, err = strconv.Atoi(right)
-		if err != nil {
-			return streamID{}, fmt.Errorf("error converting seqNumber %s", split[1])
-		}
+	if split[1] == "*" {
+		return autoSeq(msTime, last), nil
+	}
+
+	seqNumber, err := strconv.Atoi(split[1])
+	if err != nil {
+		return streamID{}, fmt.Errorf("error converting seqNumber %q: %w", split[1], err)
 	}
 
 	return streamID{msTime: msTime, seqNumber: seqNumber}, nil
+}
+
+func autoSeq(msTime int, last *streamID) streamID {
+	switch {
+	case last != nil && last.msTime == msTime:
+		return streamID{msTime: msTime, seqNumber: last.seqNumber + 1}
+	case msTime == 0:
+		return streamID{msTime: msTime, seqNumber: 1}
+	default:
+		return streamID{msTime: msTime, seqNumber: 0}
+	}
 }
