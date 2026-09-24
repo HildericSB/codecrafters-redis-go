@@ -213,27 +213,17 @@ func (s *Server) handleXRANGE(args []resp.RESP) ([]byte, error) {
 		selected = append(selected, e)
 	}
 
-	entries := make([]resp.RESP, len(selected))
-	for i, e := range selected {
+	entries := make(resp.Array, 0, len(selected))
+	for _, e := range selected {
 		idStr := e.id.String()
 
-		fieldsItems := make([]resp.RESP, 0, len(e.fields)*2)
+		fieldsItems := resp.Array{}
 		for _, f := range e.fields {
-			fieldsItems = append(fieldsItems,
-				resp.RESP{Type: resp.Bulk, Data: []byte(f.k)},
-				resp.RESP{Type: resp.Bulk, Data: []byte(f.v)},
-			)
+			fieldsItems = append(fieldsItems, resp.BulkString(f.k), resp.BulkString(f.v))
 		}
-
-		entries[i] = resp.RESP{
-			Type: resp.Array,
-			Items: []resp.RESP{
-				{Type: resp.Bulk, Data: []byte(idStr)},
-				{Type: resp.Array, Items: fieldsItems},
-			},
-		}
+		entries = append(entries, resp.Array{resp.BulkString(idStr), fieldsItems})
 	}
 
-	return resp.EncodeRESPArray(entries), nil
+	return entries.Encode(), nil
 
 }

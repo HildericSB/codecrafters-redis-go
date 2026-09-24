@@ -66,7 +66,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		fmt.Print(val)
 
-		if val.Type == resp.Array {
+		if val.Type == resp.TypeArray {
 			out, err := s.handleCmd(val)
 			if err != nil {
 				fmt.Println("handling connection failed : ", err)

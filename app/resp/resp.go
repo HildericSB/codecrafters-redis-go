@@ -11,12 +11,38 @@ import (
 type Type byte
 
 const (
-	Integer Type = ':'
-	String  Type = '+' // Simple string erminated by CRLF
-	Bulk    Type = '$' // A bulk string represents a single binary string. $<length>\r\n<data>\r\n
-	Array   Type = '*'
-	Error   Type = '-'
+	TypeInteger Type = ':'
+	String      Type = '+' // Simple string erminated by CRLF
+	Bulk        Type = '$' // A bulk string represents a single binary string. $<length>\r\n<data>\r\n
+	TypeArray   Type = '*'
+	Error       Type = '-'
 )
+
+// Value is anything that can be written as RESP
+type Value interface {
+	Encode() []byte
+}
+
+type SimpleString string
+type BulkString string
+type Integer int
+type Array []Value
+
+func (s BulkString) Encode() []byte {
+	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(s), s)
+}
+
+func (i Integer) Encode() []byte {
+	return fmt.Appendf(nil, ":%d\r\n", i)
+}
+
+func (a Array) Encode() []byte {
+	buf := fmt.Appendf(nil, "*%d\r\n", len(a))
+	for _, e := range a {
+		buf = append(buf, e.Encode()...)
+	}
+	return buf
+}
 
 type RESP struct {
 	Type  Type
@@ -81,11 +107,11 @@ func EncodeRESPArray(array []RESP) []byte {
 		switch resp.Type {
 		case String:
 			res += string(EncodeSimpleString(resp.String()))
-		case Integer:
+		case TypeInteger:
 			res += string(EncodeInteger(resp.Int()))
 		case Bulk:
 			res += string(EncodeBulkString(Ptr(resp.String())))
-		case Array:
+		case TypeArray:
 			res += string(EncodeRESPArray(resp.Items))
 
 		}
@@ -110,7 +136,7 @@ func ReadRESP(reader *bufio.Reader) (RESP, error) {
 	case String:
 		return RESP{Type: t, Data: data}, nil
 
-	case Array:
+	case TypeArray:
 		count, err := strconv.Atoi(string(data))
 		if err != nil {
 			return RESP{}, fmt.Errorf("invalid array count: %w", err)
