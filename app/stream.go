@@ -50,6 +50,24 @@ func (s streamID) String() string {
 	return fmt.Sprintf("%d-%d", s.msTime, s.seqNumber)
 }
 
+// Compare returns -1 if id < other, 0 if equal, +1 if id > other.
+func (s streamID) Compare(other streamID) int {
+	// compare msTime first
+	if s.msTime < other.msTime {
+		return -1
+	}
+	if s.msTime > other.msTime {
+		return 1
+	}
+	if s.seqNumber < other.seqNumber {
+		return -1
+	}
+	if s.seqNumber > other.seqNumber {
+		return 1
+	}
+	return 0
+}
+
 type kv struct {
 	k string
 	v string
@@ -82,7 +100,7 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 
 	// Verify id
 	if id == "0-0" {
-		return nil, fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
+		return nil, fmt.Errorf("The ID specified in XADD must be greater than 0-0")
 	}
 
 	var last *streamID
@@ -92,11 +110,11 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 
 	newStreamID, err := stringToStreamID(id, last)
 	if err != nil {
-		return nil, fmt.Errorf("ERR Parsing new stream id, %w", err)
+		return nil, fmt.Errorf("Parsing new stream id, %w", err)
 	}
 
 	if last != nil && (last.msTime > newStreamID.msTime || (last.msTime == newStreamID.msTime && last.seqNumber >= newStreamID.seqNumber)) {
-		return nil, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+		return nil, fmt.Errorf("The ID specified in XADD is equal or smaller than the target stream top item")
 	}
 
 	se := streamEntry{id: newStreamID, fields: []kv{}}
@@ -155,4 +173,67 @@ func autoSeq(msTime int, last *streamID) streamID {
 	default:
 		return streamID{msTime: msTime, seqNumber: 0}
 	}
+}
+
+func (s *Server) handleXRANGE(args []resp.RESP) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, fmt.Errorf("XRANGE cmd requires at leat 3 argument")
+	}
+
+	key := args[0].String()
+	startID, err := stringToStreamID(args[1].String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing streamID 1")
+	}
+	endID, err := stringToStreamID(args[2].String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing streamID 2")
+	}
+
+	entry := s.entries[key]
+
+	if entry == nil {
+		return nil, fmt.Errorf("entry can't be null")
+	}
+
+	var st *stream
+	var ok bool
+	if st, ok = entry.val.(*stream); !ok {
+		return nil, fmt.Errorf("entry must be a *stream")
+	}
+
+	var selected []streamEntry
+	for _, e := range st.entries {
+		if e.id.Compare(startID) == -1 {
+			continue
+		}
+		if e.id.Compare(endID) == 1 {
+			break
+		}
+		selected = append(selected, e)
+	}
+
+	entries := make([]resp.RESP, len(selected))
+	for i, e := range selected {
+		idStr := e.id.String()
+
+		fieldsItems := make([]resp.RESP, 0, len(e.fields)*2)
+		for _, f := range e.fields {
+			fieldsItems = append(fieldsItems,
+				resp.RESP{Type: resp.Bulk, Data: []byte(f.k)},
+				resp.RESP{Type: resp.Bulk, Data: []byte(f.v)},
+			)
+		}
+
+		entries[i] = resp.RESP{
+			Type: resp.Array,
+			Items: []resp.RESP{
+				{Type: resp.Bulk, Data: []byte(idStr)},
+				{Type: resp.Array, Items: fieldsItems},
+			},
+		}
+	}
+
+	return resp.EncodeRESPArray(entries), nil
+
 }

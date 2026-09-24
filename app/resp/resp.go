@@ -64,7 +64,7 @@ func EncodeBulkString(str *string) []byte {
 	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(*str), *str)
 }
 
-func EncodeArray(items []string) []byte {
+func EncodeStringArray(items []string) []byte {
 	if items == nil {
 		return []byte("*-1\r\n")
 	}
@@ -87,6 +87,7 @@ func EncodeRESPArray(array []RESP) []byte {
 			res += string(EncodeBulkString(Ptr(resp.String())))
 		case Array:
 			res += string(EncodeRESPArray(resp.Items))
+
 		}
 	}
 	return []byte(res)

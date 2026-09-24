@@ -70,7 +70,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			out, err := s.handleCmd(val)
 			if err != nil {
 				fmt.Println("handling connection failed : ", err)
-				conn.Write(resp.EncodeSimpleError(err.Error()))
+				conn.Write(resp.EncodeSimpleError("ERR " + err.Error()))
 				continue
 			}
 			conn.Write(out)
@@ -108,6 +108,8 @@ func (s *Server) handleCmd(r resp.RESP) ([]byte, error) {
 		return s.handleType(args)
 	case "XADD":
 		return s.handleXADD(args)
+	case "XRANGE":
+		return s.handleXRANGE(args)
 	default:
 		return nil, fmt.Errorf("Unknown cmd : %v", cmd)
 	}

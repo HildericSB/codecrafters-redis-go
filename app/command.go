@@ -152,7 +152,7 @@ func (s *Server) handleLrange(args []resp.RESP) ([]byte, error) {
 	for i := startIndex; i < len(values) && i <= endIndex; i++ {
 		res = append(res, values[i])
 	}
-	return resp.EncodeArray(res), nil
+	return resp.EncodeStringArray(res), nil
 }
 
 func (s *Server) handleLlen(args []resp.RESP) ([]byte, error) {
@@ -207,7 +207,7 @@ func (s *Server) handleLpop(args []resp.RESP) ([]byte, error) {
 	if !withCount {
 		return resp.EncodeBulkString(&elems[0]), nil
 	}
-	return resp.EncodeArray(elems), nil
+	return resp.EncodeStringArray(elems), nil
 }
 
 func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
@@ -232,7 +232,7 @@ func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 			elem := values[0]
 			entry.val = values[1:]
 			s.mu.Unlock()
-			return resp.EncodeArray([]string{key, elem}), nil
+			return resp.EncodeStringArray([]string{key, elem}), nil
 		}
 
 	}
@@ -250,7 +250,7 @@ func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 
 	select {
 	case val := <-ch:
-		return resp.EncodeArray([]string{key, val}), nil
+		return resp.EncodeStringArray([]string{key, val}), nil
 	case <-timeoutCh:
 		s.mu.Lock()
 		idx := slices.Index(s.waiters[key], ch)
@@ -258,12 +258,12 @@ func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 			// still waiting — genuinely timed out, nobody sent anything
 			s.waiters[key] = slices.Delete(s.waiters[key], idx, idx+1)
 			s.mu.Unlock()
-			return resp.EncodeArray(nil), nil
+			return resp.EncodeStringArray(nil), nil
 		}
 		// a pusher already claimed us right as the timer fired
 		s.mu.Unlock()
 		val := <-ch
-		return resp.EncodeArray([]string{key, val}), nil
+		return resp.EncodeStringArray([]string{key, val}), nil
 	}
 }
 
