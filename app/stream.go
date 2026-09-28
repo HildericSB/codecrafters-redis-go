@@ -9,25 +9,25 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func (s *Server) handleType(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleType(args []string) ([]byte, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("TYPE cmd requires at leat 1 argument")
 	}
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
 
 	if entry == nil {
-		return resp.EncodeSimpleString("none"), nil
+		return resp.SimpleString("none").Encode(), nil
 	}
 
 	switch entry.val.(type) {
 	case string:
-		return resp.EncodeSimpleString("string"), nil
+		return resp.SimpleString("string").Encode(), nil
 	case *stream:
-		return resp.EncodeSimpleString("stream"), nil
+		return resp.SimpleString("stream").Encode(), nil
 	default:
-		return resp.EncodeSimpleString("undefined"), nil
+		return resp.SimpleString("undefined").Encode(), nil
 	}
 }
 
@@ -73,7 +73,7 @@ type kv struct {
 	v string
 }
 
-func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleXADD(args []string) ([]byte, error) {
 	if len(args) < 4 {
 		return nil, fmt.Errorf("XADD cmd requires at leat 4 argument")
 	}
@@ -82,8 +82,8 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 		return nil, fmt.Errorf("XADD cmd requires arguments in pair")
 	}
 
-	key := args[0].String()
-	id := args[1].String()
+	key := args[0]
+	id := args[1]
 	entry := s.entries[key]
 	var st *stream
 
@@ -119,8 +119,8 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 
 	se := streamEntry{id: newStreamID, fields: []kv{}}
 	for i := 2; i < len(args); i += 2 {
-		k := args[i].String()
-		v := args[i+1].String()
+		k := args[i]
+		v := args[i+1]
 
 		se.fields = append(se.fields, kv{k: k, v: v})
 	}
@@ -130,7 +130,7 @@ func (s *Server) handleXADD(args []resp.RESP) ([]byte, error) {
 	s.entries[key] = entry
 
 	idStr := se.id.String()
-	return resp.EncodeBulkString(&idStr), nil
+	return resp.BulkString(idStr).Encode(), nil
 }
 
 func stringToStreamID(id string, last *streamID) (streamID, error) {
@@ -175,17 +175,17 @@ func autoSeq(msTime int, last *streamID) streamID {
 	}
 }
 
-func (s *Server) handleXRANGE(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, fmt.Errorf("XRANGE cmd requires at leat 3 argument")
 	}
 
-	key := args[0].String()
-	startID, err := stringToStreamID(args[1].String(), nil)
+	key := args[0]
+	startID, err := stringToStreamID(args[1], nil)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing streamID 1")
 	}
-	endID, err := stringToStreamID(args[2].String(), nil)
+	endID, err := stringToStreamID(args[2], nil)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing streamID 2")
 	}

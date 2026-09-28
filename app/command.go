@@ -3,26 +3,30 @@ package main
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-func (s *Server) handleEcho(args []resp.RESP) ([]byte, error) {
-	return resp.EncodeBulkString(resp.Ptr(string(args[0].Data))), nil
+func (s *Server) handleEcho(args []string) ([]byte, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("ECHO cmd requires at least 1 argument")
+	}
+	return resp.BulkString(args[0]).Encode(), nil
 }
 
 func (s *Server) handlePing() ([]byte, error) {
-	return resp.EncodeSimpleString("PONG"), nil
+	return resp.SimpleString("PONG").Encode(), nil
 }
 
-func (s *Server) handleSet(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleSet(args []string) ([]byte, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("SET cmd requires at least 2 arguments")
 	}
-	key := args[0].String()
-	val := args[1].String()
+	key := args[0]
+	val := args[1]
 
 	expiry, err := parseExpiry(args)
 	if err != nil {
@@ -30,19 +34,19 @@ func (s *Server) handleSet(args []resp.RESP) ([]byte, error) {
 	}
 
 	s.entries[key] = &Entry{val: val, expirationDate: expiry}
-	return resp.EncodeSimpleString("OK"), nil
+	return resp.SimpleString("OK").Encode(), nil
 }
 
-func (s *Server) handleGet(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleGet(args []string) ([]byte, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("GET cmd requires at least 1 argument")
 	}
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
 
 	if entry == nil {
-		return []byte("$-1\r\n"), nil
+		return resp.NullBulk{}.Encode(), nil
 	}
 
 	value, ok := entry.val.(string)
@@ -52,18 +56,18 @@ func (s *Server) handleGet(args []resp.RESP) ([]byte, error) {
 
 	if !entry.expirationDate.IsZero() && entry.expirationDate.Before(time.Now()) {
 		delete(s.entries, key)
-		return []byte("$-1\r\n"), nil
+		return resp.NullBulk{}.Encode(), nil
 	}
 
-	return resp.EncodeBulkString(&value), nil
+	return resp.BulkString(value).Encode(), nil
 }
 
-func (s *Server) handleRpush(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleRpush(args []string) ([]byte, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("RPUSH cmd requires at least 2 arguments")
 	}
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
 
 	if entry == nil {
@@ -76,9 +80,7 @@ func (s *Server) handleRpush(args []resp.RESP) ([]byte, error) {
 		return nil, fmt.Errorf("entry with key %s is not a list", key)
 	}
 
-	for _, item := range args[1:] {
-		values = append(values, item.String())
-	}
+	values = append(values, args[1:]...)
 
 	entry.val = values
 	s.entries[key] = entry
@@ -93,15 +95,15 @@ func (s *Server) handleRpush(args []resp.RESP) ([]byte, error) {
 	}
 	s.mu.Unlock()
 
-	return resp.EncodeInteger(len(values)), nil
+	return resp.Integer(len(values)).Encode(), nil
 }
 
-func (s *Server) handleLpush(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleLpush(args []string) ([]byte, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("LPUSH cmd requires at least 2 arguments")
 	}
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
 
 	if entry == nil {
@@ -115,26 +117,32 @@ func (s *Server) handleLpush(args []resp.RESP) ([]byte, error) {
 	}
 
 	for _, item := range args[1:] {
-		values = append([]string{item.String()}, values...)
+		values = append([]string{item}, values...)
 	}
 
 	entry.val = values
 	s.entries[key] = entry
-	return resp.EncodeInteger(len(values)), nil
+	return resp.Integer(len(values)).Encode(), nil
 }
 
-func (s *Server) handleLrange(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleLrange(args []string) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, fmt.Errorf("LRANGE cmd requires at least 3 arguments")
 	}
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
-	startIndex := args[1].Int()
-	endIndex := args[2].Int()
+	startIndex, err := parseInt(args[1])
+	if err != nil {
+		return nil, err
+	}
+	endIndex, err := parseInt(args[2])
+	if err != nil {
+		return nil, err
+	}
 
 	if entry == nil {
-		return []byte("*0\r\n"), nil
+		return resp.Array{}.Encode(), nil
 	}
 
 	values, ok := entry.val.([]string)
@@ -152,18 +160,18 @@ func (s *Server) handleLrange(args []resp.RESP) ([]byte, error) {
 	for i := startIndex; i < len(values) && i <= endIndex; i++ {
 		res = append(res, values[i])
 	}
-	return resp.EncodeStringArray(res), nil
+	return resp.BulkStrings(res).Encode(), nil
 }
 
-func (s *Server) handleLlen(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleLlen(args []string) ([]byte, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("LLEN cmd requires at least 1 parameters")
 	}
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
 
 	if entry == nil {
-		return resp.EncodeInteger(0), nil
+		return resp.Integer(0).Encode(), nil
 	}
 
 	values, ok := entry.val.([]string)
@@ -171,19 +179,19 @@ func (s *Server) handleLlen(args []resp.RESP) ([]byte, error) {
 		return nil, fmt.Errorf("entry with key %s is not a list", key)
 	}
 
-	return resp.EncodeInteger(len(values)), nil
+	return resp.Integer(len(values)).Encode(), nil
 }
 
-func (s *Server) handleLpop(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleLpop(args []string) ([]byte, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("LPOP cmd requires at least 1 parameters")
 	}
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
 
 	if entry == nil {
-		return []byte("$-1\r\n"), nil
+		return resp.NullBulk{}.Encode(), nil
 	}
 
 	values, ok := entry.val.([]string)
@@ -194,7 +202,11 @@ func (s *Server) handleLpop(args []resp.RESP) ([]byte, error) {
 	withCount := len(args) == 2
 	endIndex := 1
 	if withCount {
-		endIndex = min(args[1].Int(), len(values))
+		count, err := parseInt(args[1])
+		if err != nil {
+			return nil, err
+		}
+		endIndex = min(count, len(values))
 	}
 
 	elems := values[0:endIndex]
@@ -205,21 +217,25 @@ func (s *Server) handleLpop(args []resp.RESP) ([]byte, error) {
 	}
 
 	if !withCount {
-		return resp.EncodeBulkString(&elems[0]), nil
+		return resp.BulkString(elems[0]).Encode(), nil
 	}
-	return resp.EncodeStringArray(elems), nil
+	return resp.BulkStrings(elems).Encode(), nil
 }
 
-func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
+func (s *Server) handleBLPOP(args []string) ([]byte, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("BLPOP cmd requires at least 2 parameters")
 	}
 
+	timeoutSecs, err := strconv.ParseFloat(args[1], 64)
+	if err != nil {
+		return nil, fmt.Errorf("timeout is not a float or out of range")
+	}
+
 	s.mu.Lock()
 
-	key := args[0].String()
+	key := args[0]
 	entry := s.entries[key]
-	timeoutSecs := args[1].Float()
 
 	if entry != nil {
 		values, ok := entry.val.([]string)
@@ -232,7 +248,7 @@ func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 			elem := values[0]
 			entry.val = values[1:]
 			s.mu.Unlock()
-			return resp.EncodeStringArray([]string{key, elem}), nil
+			return resp.BulkStrings([]string{key, elem}).Encode(), nil
 		}
 
 	}
@@ -250,7 +266,7 @@ func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 
 	select {
 	case val := <-ch:
-		return resp.EncodeStringArray([]string{key, val}), nil
+		return resp.BulkStrings([]string{key, val}).Encode(), nil
 	case <-timeoutCh:
 		s.mu.Lock()
 		idx := slices.Index(s.waiters[key], ch)
@@ -258,28 +274,41 @@ func (s *Server) handleBLPOP(args []resp.RESP) ([]byte, error) {
 			// still waiting — genuinely timed out, nobody sent anything
 			s.waiters[key] = slices.Delete(s.waiters[key], idx, idx+1)
 			s.mu.Unlock()
-			return resp.EncodeStringArray(nil), nil
+			return resp.NullArray{}.Encode(), nil
 		}
 		// a pusher already claimed us right as the timer fired
 		s.mu.Unlock()
 		val := <-ch
-		return resp.EncodeStringArray([]string{key, val}), nil
+		return resp.BulkStrings([]string{key, val}).Encode(), nil
 	}
 }
 
-func parseExpiry(args []resp.RESP) (time.Time, error) {
+func parseExpiry(args []string) (time.Time, error) {
 	if len(args) <= 2 {
 		return time.Time{}, nil
 	}
 
-	option := strings.ToUpper(args[2].String())
+	option := strings.ToUpper(args[2])
 	switch option {
 	case "PX":
 		if len(args) < 4 {
 			return time.Time{}, fmt.Errorf("PX requires a value")
 		}
-		return time.Now().Add(time.Millisecond * time.Duration(args[3].Int())), nil
+		ms, err := parseInt(args[3])
+		if err != nil {
+			return time.Time{}, err
+		}
+		return time.Now().Add(time.Millisecond * time.Duration(ms)), nil
 	default:
 		return time.Time{}, fmt.Errorf("unknown option: %s", option)
 	}
+}
+
+// parseInt returns the same error as Redis when an argument is not an integer
+func parseInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("value is not an integer or out of range")
+	}
+	return n, nil
 }

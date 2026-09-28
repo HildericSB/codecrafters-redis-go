@@ -55,61 +55,60 @@ func (s *Server) handleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
-		val, err := resp.ReadRESP(reader)
+		args, err := resp.ReadCommand(reader)
 		if err != nil {
 			// Client send EOF when finished
 			if err != io.EOF {
-				fmt.Println("error reading RESP:", err)
+				fmt.Println("error reading RESP command :", err)
 			}
 			return
 		}
 
-		fmt.Print(val)
+		fmt.Print(args)
 
-		if val.Type == resp.TypeArray {
-			out, err := s.handleCmd(val)
-			if err != nil {
-				fmt.Println("handling connection failed : ", err)
-				conn.Write(resp.EncodeSimpleError("ERR " + err.Error()))
-				continue
-			}
-			conn.Write(out)
+		out, err := s.handleCmd(args)
+		if err != nil {
+			fmt.Println("handling command failed : ", err)
+			conn.Write(resp.SimpleError("ERR " + err.Error()).Encode())
+			continue
 		}
+
+		conn.Write(out)
 	}
 
 }
 
-func (s *Server) handleCmd(r resp.RESP) ([]byte, error) {
-	cmd := strings.ToUpper(r.Items[0].String())
-	args := r.Items[1:]
+func (s *Server) handleCmd(cmd []string) ([]byte, error) {
+	name := strings.ToUpper(cmd[0])
+	cmdArgs := cmd[1:]
 
-	switch cmd {
+	switch name {
 	case "ECHO":
-		return s.handleEcho(args)
+		return s.handleEcho(cmdArgs)
 	case "PING":
 		return s.handlePing()
 	case "SET":
-		return s.handleSet(args)
+		return s.handleSet(cmdArgs)
 	case "GET":
-		return s.handleGet(args)
+		return s.handleGet(cmdArgs)
 	case "RPUSH":
-		return s.handleRpush(args)
+		return s.handleRpush(cmdArgs)
 	case "LRANGE":
-		return s.handleLrange(args)
+		return s.handleLrange(cmdArgs)
 	case "LPUSH":
-		return s.handleLpush(args)
+		return s.handleLpush(cmdArgs)
 	case "LLEN":
-		return s.handleLlen(args)
+		return s.handleLlen(cmdArgs)
 	case "LPOP":
-		return s.handleLpop(args)
+		return s.handleLpop(cmdArgs)
 	case "BLPOP":
-		return s.handleBLPOP(args)
+		return s.handleBLPOP(cmdArgs)
 	case "TYPE":
-		return s.handleType(args)
+		return s.handleType(cmdArgs)
 	case "XADD":
-		return s.handleXADD(args)
+		return s.handleXADD(cmdArgs)
 	case "XRANGE":
-		return s.handleXRANGE(args)
+		return s.handleXRANGE(cmdArgs)
 	default:
 		return nil, fmt.Errorf("Unknown cmd : %v", cmd)
 	}

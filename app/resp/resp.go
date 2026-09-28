@@ -12,10 +12,10 @@ type Type byte
 
 const (
 	TypeInteger Type = ':'
-	String      Type = '+' // Simple string erminated by CRLF
-	Bulk        Type = '$' // A bulk string represents a single binary string. $<length>\r\n<data>\r\n
+	TypeString  Type = '+' // Simple string erminated by CRLF
+	TypeBulk    Type = '$' // A bulk string represents a single binary string. $<length>\r\n<data>\r\n
 	TypeArray   Type = '*'
-	Error       Type = '-'
+	TypeError   Type = '-'
 )
 
 // Value is anything that can be written as RESP
@@ -24,9 +24,24 @@ type Value interface {
 }
 
 type SimpleString string
+type SimpleError string
 type BulkString string
 type Integer int
 type Array []Value
+
+// NullBulk encodes as a null bulk string ($-1)
+type NullBulk struct{}
+
+// NullArray encodes as a null array (*-1)
+type NullArray struct{}
+
+func (s SimpleString) Encode() []byte {
+	return fmt.Appendf(nil, "+%s\r\n", s)
+}
+
+func (e SimpleError) Encode() []byte {
+	return fmt.Appendf(nil, "-%s\r\n", e)
+}
 
 func (s BulkString) Encode() []byte {
 	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(s), s)
@@ -42,6 +57,23 @@ func (a Array) Encode() []byte {
 		buf = append(buf, e.Encode()...)
 	}
 	return buf
+}
+
+func (NullBulk) Encode() []byte {
+	return []byte("$-1\r\n")
+}
+
+func (NullArray) Encode() []byte {
+	return []byte("*-1\r\n")
+}
+
+// BulkStrings wraps each string as a BulkString
+func BulkStrings(ss []string) Array {
+	a := make(Array, 0, len(ss))
+	for _, s := range ss {
+		a = append(a, BulkString(s))
+	}
+	return a
 }
 
 type RESP struct {
@@ -69,99 +101,86 @@ func (r RESP) Bytes() []byte {
 	return r.Data
 }
 
-func Ptr(s string) *string { return &s }
-
-func EncodeSimpleString(str string) []byte {
-	return fmt.Appendf(nil, "+%s\r\n", str)
-}
-
-func EncodeSimpleError(str string) []byte {
-	return fmt.Appendf(nil, "-%s\r\n", str)
-}
-
-func EncodeInteger(val int) []byte {
-	return fmt.Appendf(nil, ":%d\r\n", val)
-}
-
-func EncodeBulkString(str *string) []byte {
-	if str == nil {
-		return []byte("$-1\r\n")
-	}
-	return fmt.Appendf(nil, "$%d\r\n%s\r\n", len(*str), *str)
-}
-
-func EncodeStringArray(items []string) []byte {
-	if items == nil {
-		return []byte("*-1\r\n")
-	}
-	res := "*" + strconv.Itoa(len(items)) + "\r\n"
-	for _, s := range items {
-		res += string(EncodeBulkString(Ptr(s)))
-	}
-	return []byte(res)
-}
-
-func EncodeRESPArray(array []RESP) []byte {
-	res := "*" + strconv.Itoa(len(array)) + "\r\n"
-	for _, resp := range array {
-		switch resp.Type {
-		case String:
-			res += string(EncodeSimpleString(resp.String()))
-		case TypeInteger:
-			res += string(EncodeInteger(resp.Int()))
-		case Bulk:
-			res += string(EncodeBulkString(Ptr(resp.String())))
-		case TypeArray:
-			res += string(EncodeRESPArray(resp.Items))
-
-		}
-	}
-	return []byte(res)
-}
-
-// readRESP : use a reader to return a RESP
-func ReadRESP(reader *bufio.Reader) (RESP, error) {
-	line, _, err := reader.ReadLine() // readline remove crlf
-
-	// fmt.Printf("Reading line : %s \n", line)
-
+func ReadValue(r *bufio.Reader) (Value, error) {
+	line, _, err := r.ReadLine() // readline remove crlf
 	if err != nil {
-		return RESP{}, err
+		return nil, err
 	}
 
-	t := Type(line[0])
-	data := line[1:]
+	if len(line) == 0 {
+		return nil, fmt.Errorf("empty line")
+	}
 
-	switch t {
-	case String:
-		return RESP{Type: t, Data: data}, nil
-
-	case TypeArray:
-		count, err := strconv.Atoi(string(data))
+	switch line[0] {
+	case '+':
+		return SimpleString(line[1:]), nil
+	case '$':
+		n, err := strconv.Atoi(string(line[1:]))
 		if err != nil {
-			return RESP{}, fmt.Errorf("invalid array count: %w", err)
+			return nil, fmt.Errorf("cant read bulk string size : %w", err)
 		}
-		items := make([]RESP, count)
-		for i := range items {
-			items[i], err = ReadRESP(reader)
-			if err != nil {
-				return RESP{}, err
-			}
+		if n == -1 {
+			return NullBulk{}, nil
 		}
-		return RESP{Type: t, Count: count, Items: items}, nil
-	case Bulk:
-		n, err := strconv.Atoi(string(data))
-		if err != nil {
-			return RESP{}, fmt.Errorf("invalid bulk length: %w", err)
+		if n < -1 {
+			return nil, fmt.Errorf("invalid size: %d", n)
 		}
-		// n bytes of data + \r\n
 		buff := make([]byte, n+2)
-		if _, err := io.ReadFull(reader, buff); err != nil {
-			return RESP{}, err
+		if _, err := io.ReadFull(r, buff); err != nil {
+			return nil, err
 		}
-		return RESP{Type: t, Data: buff[:n]}, nil
-
-	default:
-		return RESP{}, fmt.Errorf("Unknown resp type")
+		return BulkString(buff[:n]), nil
+	case ':':
+		r, err := strconv.Atoi(string(line[1:]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer: %w", err)
+		}
+		return Integer(r), nil
+	case '-':
+		return SimpleError(line[1:]), nil
+	case '*':
+		size, err := strconv.Atoi(string(line[1:]))
+		res := make([]Value, 0, size)
+		if err != nil {
+			return nil, fmt.Errorf("invalid array size: %w", err)
+		}
+		for i := 0; i < int(size); i++ {
+			v, err := ReadValue(r)
+			if err != nil {
+				return nil, err
+			}
+			res = append(res, v)
+		}
+		return Array(res), nil
 	}
+
+	return nil, nil
+}
+
+func ReadCommand(reader *bufio.Reader) ([]string, error) {
+	value, err := ReadValue(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	cmds, ok := value.(Array)
+
+	if !ok {
+		return nil, fmt.Errorf("command should be an array, got %T", value)
+	}
+
+	if len(cmds) == 0 {
+		return nil, fmt.Errorf("command should have at least one element")
+	}
+
+	res := make([]string, 0, len(cmds))
+	for _, c := range cmds {
+		s, ok := c.(BulkString)
+		if !ok {
+			return nil, fmt.Errorf("command args should be a bulk string, got %T", c)
+		}
+		res = append(res, string(s))
+	}
+
+	return res, nil
 }
