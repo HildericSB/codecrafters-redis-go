@@ -98,23 +98,24 @@ func (s *Server) handleXADD(args []string) ([]byte, error) {
 		entry = &Entry{val: st}
 	}
 
-	// Verify id
-	if id == "0-0" {
-		return nil, fmt.Errorf("The ID specified in XADD must be greater than 0-0")
-	}
-
 	var last *streamID
 	if len(st.entries) >= 1 {
 		last = &st.entries[len(st.entries)-1].id
 	}
 
-	newStreamID, err := stringToStreamID(id, last)
+	newStreamID, err := nextStreamID(id, last)
+
 	if err != nil {
-		return nil, fmt.Errorf("Parsing new stream id, %w", err)
+		return nil, err
 	}
 
-	if last != nil && (last.msTime > newStreamID.msTime || (last.msTime == newStreamID.msTime && last.seqNumber >= newStreamID.seqNumber)) {
+	if newStreamID == (streamID{}) {
+		return nil, fmt.Errorf("The ID specified in XADD must be greater than 0-0")
+	}
+
+	if last != nil && newStreamID.Compare(*last) <= 0 {
 		return nil, fmt.Errorf("The ID specified in XADD is equal or smaller than the target stream top item")
+
 	}
 
 	se := streamEntry{id: newStreamID, fields: []kv{}}
@@ -129,11 +130,12 @@ func (s *Server) handleXADD(args []string) ([]byte, error) {
 
 	s.entries[key] = entry
 
-	idStr := se.id.String()
-	return resp.BulkString(idStr).Encode(), nil
+	return resp.BulkString(se.id.String()).Encode(), nil
 }
 
-func stringToStreamID(id string, last *streamID) (streamID, error) {
+// nextStreamID turns an XADD id argument ("*", "<ms>-*" or "<ms>-<seq>")
+// into a concrete streamID, using last to generate sequence numbers.
+func nextStreamID(id string, last *streamID) (streamID, error) {
 	if id == "*" {
 		msTime := int(time.Now().UnixMilli())
 		if last != nil {
@@ -142,23 +144,23 @@ func stringToStreamID(id string, last *streamID) (streamID, error) {
 		return autoSeq(msTime, last), nil
 	}
 
-	split := strings.Split(id, "-")
-	if len(split) != 2 {
-		return streamID{}, fmt.Errorf("error splitting id %q", id)
+	msStr, seqStr, hasSeq := strings.Cut(id, "-")
+	if !hasSeq {
+		return streamID{}, fmt.Errorf("invalid stream ID %q", id)
 	}
 
-	msTime, err := strconv.Atoi(split[0])
+	msTime, err := strconv.Atoi(msStr)
 	if err != nil {
-		return streamID{}, fmt.Errorf("error converting msTime %s", split[0])
+		return streamID{}, fmt.Errorf("invalid ms time %q: %w", msStr, err)
 	}
 
-	if split[1] == "*" {
+	if seqStr == "*" {
 		return autoSeq(msTime, last), nil
 	}
 
-	seqNumber, err := strconv.Atoi(split[1])
+	seqNumber, err := strconv.Atoi(seqStr)
 	if err != nil {
-		return streamID{}, fmt.Errorf("error converting seqNumber %q: %w", split[1], err)
+		return streamID{}, fmt.Errorf("invalid sequence number %q: %w", seqStr, err)
 	}
 
 	return streamID{msTime: msTime, seqNumber: seqNumber}, nil
@@ -181,11 +183,11 @@ func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 	}
 
 	key := args[0]
-	startID, err := stringToStreamID(args[1], nil)
+	startID, err := rangeBound(args[1])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing streamID 1")
 	}
-	endID, err := stringToStreamID(args[2], nil)
+	endID, err := rangeBound(args[2])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing streamID 2")
 	}
@@ -226,4 +228,27 @@ func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 
 	return entries.Encode(), nil
 
+}
+
+func rangeBound(arg string) (streamID, error) {
+	if arg == "-" {
+		return streamID{}, nil
+	}
+
+	msStr, seqStr, hasSeq := strings.Cut(arg, "-")
+	if !hasSeq {
+		return streamID{}, fmt.Errorf("malformed stream ID : %q", arg)
+	}
+
+	ms, err := strconv.Atoi(msStr)
+	if err != nil {
+		return streamID{}, fmt.Errorf("can't parse ms : %q : %w", msStr, err)
+	}
+
+	seq, err := strconv.Atoi(seqStr)
+	if err != nil {
+		return streamID{}, fmt.Errorf("can't parse seq : %q : %w", seqStr, err)
+	}
+
+	return streamID{msTime: ms, seqNumber: seq}, nil
 }
