@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -233,6 +234,10 @@ func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 func rangeBound(arg string) (streamID, error) {
 	if arg == "-" {
 		return streamID{}, nil
+	}
+
+	if arg == "+" {
+		return streamID{msTime: math.MaxInt, seqNumber: math.MaxInt}, nil
 	}
 
 	msStr, seqStr, hasSeq := strings.Cut(arg, "-")
