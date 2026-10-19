@@ -109,6 +109,8 @@ func (s *Server) handleCmd(cmd []string) ([]byte, error) {
 		return s.handleXADD(cmdArgs)
 	case "XRANGE":
 		return s.handleXRANGE(cmdArgs)
+	case "XREAD":
+		return s.handleXREAD(cmdArgs)
 	default:
 		return nil, fmt.Errorf("Unknown cmd : %v", cmd)
 	}

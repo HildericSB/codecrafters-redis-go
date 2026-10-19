@@ -184,6 +184,12 @@ func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 	}
 
 	key := args[0]
+	entry := s.entries[key]
+
+	if entry == nil {
+		return nil, fmt.Errorf("entry can't be null")
+	}
+
 	startID, err := rangeBound(args[1])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing streamID 1")
@@ -191,12 +197,6 @@ func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 	endID, err := rangeBound(args[2])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing streamID 2")
-	}
-
-	entry := s.entries[key]
-
-	if entry == nil {
-		return nil, fmt.Errorf("entry can't be null")
 	}
 
 	var st *stream
@@ -256,4 +256,59 @@ func rangeBound(arg string) (streamID, error) {
 	}
 
 	return streamID{msTime: ms, seqNumber: seq}, nil
+}
+
+func (s *Server) handleXREAD(args []string) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, fmt.Errorf("XREAD cmd requires at leat 3 argument")
+	}
+
+	option := strings.ToUpper(args[0])
+	if option != "STREAMS" {
+		return nil, fmt.Errorf("only stream option supported for now")
+	}
+
+	key := args[1]
+
+	entry := s.entries[key]
+	if entry == nil {
+		return resp.NullArray{}.Encode(), nil
+	}
+
+	startID, err := rangeBound(args[2])
+	if err != nil {
+		return nil, fmt.Errorf("error parsing streamID : %w", err)
+	}
+
+	var st *stream
+	var ok bool
+	if st, ok = entry.val.(*stream); !ok {
+		return nil, fmt.Errorf("entry must be a *stream")
+	}
+
+	var selected []streamEntry
+	for i, e := range st.entries {
+		if e.id.Compare(startID) == 1 {
+			selected = st.entries[i:]
+			break
+		}
+	}
+
+	if len(selected) == 0 {
+		return resp.NullArray{}.Encode(), nil
+	}
+
+	entries := make(resp.Array, 0, len(selected))
+	for _, e := range selected {
+		idStr := e.id.String()
+
+		fieldItems := resp.Array{}
+		for _, f := range e.fields {
+			fieldItems = append(fieldItems, resp.BulkString(f.k), resp.BulkString(f.v))
+		}
+
+		entries = append(entries, resp.Array{resp.BulkString(idStr), fieldItems})
+	}
+
+	return resp.Array{resp.Array{resp.BulkString(key), entries}}.Encode(), nil
 }
