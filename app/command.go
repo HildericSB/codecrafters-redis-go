@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
+	"github.com/codecrafters-io/redis-starter-go/app/stream"
 )
 
 func (s *Server) handleEcho(args []string) ([]byte, error) {
@@ -311,4 +312,26 @@ func parseInt(s string) (int, error) {
 		return 0, fmt.Errorf("value is not an integer or out of range")
 	}
 	return n, nil
+}
+
+func (s *Server) handleType(args []string) ([]byte, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("TYPE cmd requires at leat 1 argument")
+	}
+
+	key := args[0]
+	entry := s.entries[key]
+
+	if entry == nil {
+		return resp.SimpleString("none").Encode(), nil
+	}
+
+	switch entry.val.(type) {
+	case string:
+		return resp.SimpleString("string").Encode(), nil
+	case *stream.Stream:
+		return resp.SimpleString("stream").Encode(), nil
+	default:
+		return resp.SimpleString("undefined").Encode(), nil
+	}
 }
