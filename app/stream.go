@@ -37,6 +37,30 @@ type stream struct {
 	entries []streamEntry
 }
 
+func (st *stream) after(id streamID) []streamEntry {
+	for i, e := range st.entries {
+		if e.id.Compare(id) == 1 {
+			return st.entries[i:]
+		}
+	}
+	return nil
+}
+
+// between returns the entries with start <= id <= end.
+func (st *stream) between(start, end streamID) []streamEntry {
+	var selected []streamEntry
+	for _, e := range st.entries {
+		if e.id.Compare(start) < 0 {
+			continue
+		}
+		if e.id.Compare(end) > 0 {
+			break
+		}
+		selected = append(selected, e)
+	}
+	return selected
+}
+
 type streamEntry struct {
 	id     streamID
 	fields []kv
@@ -184,65 +208,34 @@ func (s *Server) handleXRANGE(args []string) ([]byte, error) {
 	}
 
 	key := args[0]
+
+	startID, err := parseRangeID(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid start ID: %w", err)
+	}
+	endID, err := parseRangeID(args[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid end ID: %w", err)
+	}
+
 	entry := s.entries[key]
-
 	if entry == nil {
-		return nil, fmt.Errorf("entry can't be null")
+		return resp.Array{}.Encode(), nil
 	}
 
-	startID, err := rangeBound(args[1])
-	if err != nil {
-		return nil, fmt.Errorf("error parsing streamID 1")
-	}
-	endID, err := rangeBound(args[2])
-	if err != nil {
-		return nil, fmt.Errorf("error parsing streamID 2")
-	}
-
-	var st *stream
-	var ok bool
-	if st, ok = entry.val.(*stream); !ok {
+	st, ok := entry.val.(*stream)
+	if !ok {
 		return nil, fmt.Errorf("entry must be a *stream")
 	}
 
-	var selected []streamEntry
-	for _, e := range st.entries {
-		if e.id.Compare(startID) == -1 {
-			continue
-		}
-		if e.id.Compare(endID) == 1 {
-			break
-		}
-		selected = append(selected, e)
-	}
-
-	entries := make(resp.Array, 0, len(selected))
-	for _, e := range selected {
-		idStr := e.id.String()
-
-		fieldsItems := resp.Array{}
-		for _, f := range e.fields {
-			fieldsItems = append(fieldsItems, resp.BulkString(f.k), resp.BulkString(f.v))
-		}
-		entries = append(entries, resp.Array{resp.BulkString(idStr), fieldsItems})
-	}
-
-	return entries.Encode(), nil
-
+	return encodeEntries(st.between(startID, endID)).Encode(), nil
 }
 
-func rangeBound(arg string) (streamID, error) {
-	if arg == "-" {
-		return streamID{}, nil
-	}
-
-	if arg == "+" {
-		return streamID{msTime: math.MaxInt, seqNumber: math.MaxInt}, nil
-	}
-
-	msStr, seqStr, hasSeq := strings.Cut(arg, "-")
+// parseStreamID parses a literal "<ms>-<seq>" stream ID.
+func parseStreamID(s string) (streamID, error) {
+	msStr, seqStr, hasSeq := strings.Cut(s, "-")
 	if !hasSeq {
-		return streamID{}, fmt.Errorf("malformed stream ID : %q", arg)
+		return streamID{}, fmt.Errorf("malformed stream ID : %q", s)
 	}
 
 	ms, err := strconv.Atoi(msStr)
@@ -258,6 +251,17 @@ func rangeBound(arg string) (streamID, error) {
 	return streamID{msTime: ms, seqNumber: seq}, nil
 }
 
+// parseRangeID parses an XRANGE bound: "-", "+", or a stream ID.
+func parseRangeID(s string) (streamID, error) {
+	switch s {
+	case "-":
+		return streamID{}, nil
+	case "+":
+		return streamID{msTime: math.MaxInt, seqNumber: math.MaxInt}, nil
+	}
+	return parseStreamID(s)
+}
+
 func (s *Server) handleXREAD(args []string) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, fmt.Errorf("XREAD cmd requires at leat 3 argument")
@@ -268,47 +272,61 @@ func (s *Server) handleXREAD(args []string) ([]byte, error) {
 		return nil, fmt.Errorf("only stream option supported for now")
 	}
 
-	key := args[1]
-
-	entry := s.entries[key]
-	if entry == nil {
-		return resp.NullArray{}.Encode(), nil
+	pairs := args[1:]
+	n := len(pairs)
+	if n%2 != 0 {
+		return nil, fmt.Errorf("Unbalanced 'xread' list of streams: for each stream key an ID must be specified.")
 	}
 
-	startID, err := rangeBound(args[2])
-	if err != nil {
-		return nil, fmt.Errorf("error parsing streamID : %w", err)
-	}
+	keys := pairs[:n/2]
+	ids := pairs[n/2:]
 
-	var st *stream
-	var ok bool
-	if st, ok = entry.val.(*stream); !ok {
-		return nil, fmt.Errorf("entry must be a *stream")
-	}
-
-	var selected []streamEntry
-	for i, e := range st.entries {
-		if e.id.Compare(startID) == 1 {
-			selected = st.entries[i:]
-			break
+	startIDs := make([]streamID, 0, len(ids))
+	for _, id := range ids {
+		startID, err := parseStreamID(id)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ID %q: %w", id, err)
 		}
+		startIDs = append(startIDs, startID)
 	}
 
-	if len(selected) == 0 {
+	var streams resp.Array
+	for i, key := range keys {
+		entry := s.entries[key]
+		if entry == nil {
+			continue
+		}
+
+		st, ok := entry.val.(*stream)
+		if !ok {
+			return nil, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+		}
+
+		selected := st.after(startIDs[i])
+		if len(selected) == 0 {
+			continue
+		}
+
+		streams = append(streams, resp.Array{resp.BulkString(key), encodeEntries(selected)})
+	}
+
+	if len(streams) == 0 {
 		return resp.NullArray{}.Encode(), nil
 	}
 
-	entries := make(resp.Array, 0, len(selected))
-	for _, e := range selected {
-		idStr := e.id.String()
+	return streams.Encode(), nil
+}
 
+func encodeEntries(entries []streamEntry) resp.Array {
+	res := make(resp.Array, 0, len(entries))
+	for _, e := range entries {
 		fieldItems := resp.Array{}
 		for _, f := range e.fields {
 			fieldItems = append(fieldItems, resp.BulkString(f.k), resp.BulkString(f.v))
 		}
 
-		entries = append(entries, resp.Array{resp.BulkString(idStr), fieldItems})
+		res = append(res, resp.Array{resp.BulkString(e.id.String()), fieldItems})
 	}
 
-	return resp.Array{resp.Array{resp.BulkString(key), entries}}.Encode(), nil
+	return res
 }
